@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Cortex Debug ",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "cwd": "${workspaceFolder}/Code_set_Folder/core_code",
+            "executable": "${workspaceFolder}/Code_set_Folder/core_code/build/core_code.elf",
+            "device": "STM32F407ZG",
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/stm32f4x.cfg"
+            ],
+            "runToEntryPoint": "main",
+            "showDevDebugOutput": "parsed"
+        }
+    ]
+}

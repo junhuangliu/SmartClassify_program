@@ -1,0 +1,33 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build core_code",
+            "type": "shell",
+            "command": "make",
+            "options": {
+                "cwd": "${workspaceFolder}/Code_set_Folder/core_code"
+            },
+            "group": { 
+                "kind": "build", 
+                "isDefault": true 
+            },
+            "problemMatcher": ["$gcc"]
+        },
+        {
+    "label": "Flash core_code",
+    "type": "shell",
+    "command": "openocd",
+    "args": [
+        "-f", "interface/cmsis-dap.cfg",
+        "-f", "target/stm32f4x.cfg",
+        "-c", "program build/core_code.elf verify reset exit"
+    ],
+    "options": {
+        "cwd": "${workspaceFolder}/Code_set_Folder/core_code"
+    },
+    "group": "build",
+    "problemMatcher": []
+}
+    ]
+}

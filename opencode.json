@@ -15,5 +15,16 @@
     "*.elf",
     "*.hex",
     "*.bin"
-  ]
+  ],
+  "permission": {
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "edit": "allow",
+    "write": "allow",
+    "bash": "allow",
+    "task": "allow",
+    "webfetch": "ask",
+    "websearch": "ask"
+  }
 }

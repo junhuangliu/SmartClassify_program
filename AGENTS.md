@@ -13,7 +13,6 @@ SmartClassify_program/
 ├── log/             # 任务日志（按日期命名）
 ├── Code_set_Folder/
 │   └── core_code/   # 主工程（Makefile、Core/、Drivers/、Middlewares/ 等）
-└── reference/       # 参考资料
 ```
 
 ## 构建与调试

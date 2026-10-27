@@ -24,7 +24,7 @@
     "write": "allow",
     "bash": "allow",
     "task": "allow",
-    "webfetch": "ask",
-    "websearch": "ask"
+    "webfetch": "allow",
+    "websearch": "allow"
   }
 }

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md", "README.md"],
+  "ignorePatterns": [
+    "build/**",
+    "Code_set_Folder/core_code/build/**",
+    "Drivers/**",
+    "Middlewares/**",
+    "startup_stm32f407xx.s",
+    "STM32F407xx_FLASH.ld",
+    "*.ioc",
+    "*.map",
+    "*.o",
+    "*.d",
+    "*.elf",
+    "*.hex",
+    "*.bin"
+  ]
+}

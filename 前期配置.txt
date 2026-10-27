@@ -1,31 +1,25 @@
 编译烧录配置
-正点原子
-https://www.openedv.com/thread-301567-1-1.html
+        正点原子
+        https://www.openedv.com/thread-301567-1-1.html
 
-正点原子无线调试器【高速版】ATL-HSWLDBG资料下载：
-https://www.openedv.com/docs/tool/dap/ATL-HSWLDBG.html
-https://pan.baidu.com/s/197MbjizcL-SIA9vhd-YhzQ 提取码：6fa7
+        正点原子无线调试器【高速版】ATL-HSWLDBG资料下载：
+        https://www.openedv.com/docs/tool/dap/ATL-HSWLDBG.html
+        https://pan.baidu.com/s/197MbjizcL-SIA9vhd-YhzQ 提取码：6fa7
 
 0. 先确认硬件和驱动
-1. 设备管理器确认：
-- 通用串行总线设备 → ATK-HS-V3-CMSIS-DAP，无黄叹号。
-- 端口 → USB 串行设备 (COM3)。
-2. 接线：
-- 无线 TX 端插电脑；
-- RX 端接目标板：3V3、GND、SWDIO、SWCLK（至少接 GND+SWDIO+SWCLK）；
-- 给 RX 和目标板上电。
-3. 烧录前关闭 ATK-DAP助手、Keil、无线调试器配置软件，否则 DAP 会被占用。
+正确接入无线调试器
+
 
 1. 安装 VS Code 扩展
 扩展搜索cortex-debug，cpptools
 扩展搜索cortex-debug，cpptools
 扩展搜索cortex-debug，cpptools
-或在 PowerShell 执行：
-code --install-extension marus25.cortex-debug
-code --install-extension ms-vscode.cpptools
-可选（从源码构建时）：
-code --install-extension ms-vscode.cmake-tools
-code --install-extension twxs.cmake
+        或在 PowerShell 执行：
+        code --install-extension marus25.cortex-debug
+        code --install-extension ms-vscode.cpptools
+        可选（从源码构建时）：
+        code --install-extension ms-vscode.cmake-tools
+        code --install-extension twxs.cmake
 
 2. 安装 OpenOCD
 需挂载github加速，在 PowerShell 执行：
@@ -39,21 +33,44 @@ Get-ChildItem "$env:LOCALAPPDATA\xpack-dev-tools","$env:ProgramFiles\xpack-dev-t
 把对应的 bin 目录加入用户 PATH，或稍后在 launch.json 里用 "serverpath" 指定。
 
 3. 调试还需要 GDB
-Cortex-Debug 调试时会调用 arm-none-eabi-gdb。只烧录可以不要，但要 F5 调试就必须装：
+        Cortex-Debug 调试时会调用 arm-none-eabi-gdb。只烧录可以不要，但要 F5 调试就必须装：
 winget install Arm.GnuArmEmbeddedToolchain
 装完确认：
 arm-none-eabi-gdb --version
 
-4. 先验证 DAP 链路（不写 Flash）
-openocd -f interface/cmsis-dap.cfg -f target/stm32f4x.cfg -c "adapter speed 1000" -c "init; targets; shutdown"
-正常会看到类似：
-Info : CMSIS-DAP: SWD supported
-Info : CMSIS-DAP: Interface Initialised (HID)
-Info : STM32F4xx...
-Info : Examined Cortex-M...
-看到这些说明 DAP、接线、目标板都通了。
-如果识别不到设备，可显式指定 VID/PID：
-openocd -f interface/cmsis-dap.cfg -c "cmsis-dap vid_pid 0x04d8 0x00df" -f target/stm32f4x.cfg -c "init; targets; shutdown"
+        4. 先验证 DAP 链路（不写 Flash）
+        openocd -f interface/cmsis-dap.cfg -f target/stm32f4x.cfg -c "adapter speed 1000" -c "init; targets; shutdown"
+        正常会看到类似：
+        Info : CMSIS-DAP: SWD supported
+        Info : CMSIS-DAP: Interface Initialised (HID)
+        Info : STM32F4xx...
+        Info : Examined Cortex-M...
+        看到这些说明 DAP、接线、目标板都通了。
+        如果识别不到设备，可显式指定 VID/PID：
+        openocd -f interface/cmsis-dap.cfg -c "cmsis-dap vid_pid 0x04d8 0x00df" -f target/stm32f4x.cfg -c "init; targets; shutdown"
 
 CUBEMX安装包
 https://www.st.com.cn/zh/development-tools/stm32cubemx.html
+
+引脚配置文件:Code_set_Folder\core_code\core_code.ioc
+主函数文件:Code_set_Folder\core_code\Core\Src\main.c
+
+opencode配置
+
+步骤 A：安装 Node.js（唯一的必备）
+    opencode 运行依赖 Node.js。
+1. 打开 nodejs.org (https://nodejs.org)，下载 LTS 版本（左边的「LTS」按钮）
+2. 按默认选项一路「下一步」安装（不用改安装路径也没问题）
+3. 安装完成后，去 VS Code 验证
+在 VS Code 里：
+1. 打开任意一个文件夹（菜单 文件 > 打开文件夹，随便建个空文件夹即可）
+2. 按  Ctrl + ` （或 终端 > 新建终端）打开集成终端
+3. 输入以下命令并回车：
+node -v
+npm -v
+预期：都输出版本号（例如 v22.x.x、10.x.x）。只要有版本号就说明成功。
+步骤 B：首次启动 opencode
+在同一个 VS Code 集成终端里，直接运行：
+npx opencode@latest
+首次运行会自动下载，稍等片刻即可进入 opencode 的 TUI 界面。
+步骤  C：安装opencode插件

@@ -166,6 +166,12 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+  const osThreadAttr_t pa10Task_attributes = {
+    .name = "pa10Blink",
+    .stack_size = 128 * 4,
+    .priority = (osPriority_t) osPriorityNormal,
+  };
+  osThreadNew(PA10BlinkTask, NULL, &pa10Task_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

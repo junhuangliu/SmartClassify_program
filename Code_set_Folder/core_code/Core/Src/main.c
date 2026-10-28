@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "uart1_comm.h"
+#include "ws2812_spi.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -92,6 +93,7 @@ void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 void Uart1RxTask(void *argument);
+void WS2812Task(void *argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -143,6 +145,7 @@ int main(void)
   MX_USB_OTG_FS_PCD_Init();
   /* USER CODE BEGIN 2 */
   Uart1Comm_Init();
+  WS2812_Init();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -183,6 +186,13 @@ int main(void)
     .priority = (osPriority_t) osPriorityNormal,
   };
   osThreadNew(Uart1RxTask, NULL, &uart1RxTask_attributes);
+
+  const osThreadAttr_t ws2812Task_attributes = {
+    .name = "WS2812Task",
+    .stack_size = 256 * 4,
+    .priority = (osPriority_t) osPriorityNormal,
+  };
+  osThreadNew(WS2812Task, NULL, &ws2812Task_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

@@ -26,6 +26,7 @@
 /* USER CODE BEGIN Includes */
 #include "cmsis_os2.h"
 #include "uart1_comm.h"
+#include "ws2812_spi.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -64,6 +65,19 @@
  * @retval 无
  */
 void Uart1RxTask(void *argument);
+
+/**
+ * @brief WS2812 灯带测试任务
+ * 
+ * @details
+ * - 设计意图：用于验证 SPI1 模拟 WS2812 时序是否正常
+ * - 实现要点：依次点亮红、绿、蓝并循环刷新，低频更新便于观察
+ * - 注意事项：刷新时使用阻塞 SPI 发送，时间极短不影响其他任务
+ * 
+ * @param argument 未使用
+ * @retval 无
+ */
+void WS2812Task(void *argument);
 
 /**
  * @brief PA10闪烁测试任务
@@ -119,6 +133,45 @@ void Uart1RxTask(void *argument)
     {
       osDelay(10);
     }
+  }
+}
+
+/**
+ * @brief WS2812 灯带测试任务实现
+ * 
+ * @details
+ * - 设计意图：验证 SPI1 模拟 WS2812 时序是否正常
+ * - 实现要点：循环切换红、绿、蓝三色，低频刷新便于观察
+ * - 注意事项：使用阻塞 SPI 发送，刷新极短不影响其他任务
+ * 
+ * @param argument 未使用
+ * @retval 无
+ */
+void WS2812Task(void *argument)
+{
+  (void)argument;
+  
+  for (;;)
+  {
+    /* 红色 */
+    WS2812_SetAll(255, 0, 0);
+    WS2812_Show();
+    osDelay(500);
+    
+    /* 绿色 */
+    WS2812_SetAll(0, 255, 0);
+    WS2812_Show();
+    osDelay(500);
+    
+    /* 蓝色 */
+    WS2812_SetAll(0, 0, 255);
+    WS2812_Show();
+    osDelay(500);
+    
+    /* 全灭 */
+    WS2812_SetAll(0, 0, 0);
+    WS2812_Show();
+    osDelay(500);
   }
 }
 

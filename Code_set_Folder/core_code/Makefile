@@ -57,6 +57,7 @@ Core/Src/sysmem.c \
 Core/Src/syscalls.c \
 Core/Src/freertos.c \
 Core/Src/uart1_comm.c \
+Core/Src/ws2812_spi.c \
 Middlewares/Third_Party/FreeRTOS/Source/croutine.c \
 Middlewares/Third_Party/FreeRTOS/Source/event_groups.c \
 Middlewares/Third_Party/FreeRTOS/Source/list.c \

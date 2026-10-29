@@ -9,35 +9,35 @@
 #include "gpio.h"
 #include <stdbool.h>
 /**********************************************************
-***	Emm_V5.0²½½ø±Õ»·¿ØÖÆÀı³Ì
-***	±àĞ´×÷Õß£ºZHANGDATOU
-***	¼¼ÊõÖ§³Ö£ºÕÅ´óÍ·±Õ»·ËÅ·ş
-***	ÌÔ±¦µêÆÌ£ºhttps://zhangdatou.taobao.com
-***	CSDN²©¿Í£ºhttp s://blog.csdn.net/zhangdatou666
-***	qq½»Á÷Èº£º262438510
+***	Emm_V5.0æ­¥è¿›é—­ç¯æ§åˆ¶ä¾‹ç¨‹
+***	ç¼–å†™ä½œè€…ï¼šZHANGDATOU
+***	æŠ€æœ¯æ”¯æŒï¼šå¼ å¤§å¤´é—­ç¯ä¼ºæœ
+***	æ·˜å®åº—é“ºï¼šhttps://zhangdatou.taobao.com
+***	CSDNåšå®¢ï¼šhttp s://blog.csdn.net/zhangdatou666
+***	qqäº¤æµç¾¤ï¼š262438510
 **********************************************************/
 
 #define					ABS(x)							((x) > 0 ? (x) : -(x)) 
 
 typedef enum {
-	S_VBUS  = 5,	// ¶ÁÈ¡×ÜÏßµçÑ¹
-	S_CBUS  = 6,	// ¶ÁÈ¡×ÜÏßµçÁ÷
-	S_CPHA  = 7,	// ¶ÁÈ¡ÏàµçÁ÷
-	S_ENCO  = 8,	// ¶ÁÈ¡±àÂëÆ÷Ô­Ê¼Öµ
-	S_CLKC  = 9,	// ¶ÁÈ¡ÊµÊ±Âö³åÊı
-	S_ENCL  = 10,	// ¶ÁÈ¡¾­¹ıÏßĞÔ»¯Ğ£×¼ºóµÄ±àÂëÆ÷Öµ
-	S_CLKI  = 11,	// ¶ÁÈ¡ÊäÈëÂö³åÊı
-	S_TPOS  = 12,	// ¶ÁÈ¡µç»úÄ¿±êÎ»ÖÃ
-	S_SPOS  = 13,	// ¶ÁÈ¡µç»úÊµÊ±Éè¶¨µÄÄ¿±êÎ»ÖÃ
-	S_VEL   = 14,	// ¶ÁÈ¡µç»úÊµÊ±×ªËÙ
-	S_CPOS  = 15,	// ¶ÁÈ¡µç»úÊµÊ±Î»ÖÃ
-	S_PERR  = 16,	// ¶ÁÈ¡µç»úÎ»ÖÃÎó²î
-	S_VBAT  = 17,	// ¶ÁÈ¡¶àÈ¦±àÂëÆ÷µç³ØµçÑ¹£¨Y42£©
-	S_TEMP  = 18,	// ¶ÁÈ¡µç»úÊµÊ±ÎÂ¶È£¨Y42£©
-	S_FLAG  = 19,	// ¶ÁÈ¡µç»ú×´Ì¬±êÖ¾Î»
-	S_OFLAG = 20, // ¶ÁÈ¡»ØÁã×´Ì¬±êÖ¾Î»
-	S_OAF   = 21,	// ¶ÁÈ¡µç»ú×´Ì¬±êÖ¾Î» + »ØÁã×´Ì¬±êÖ¾Î»£¨Y42£©
-	S_PIN   = 22,	// ¶ÁÈ¡Òı½Å×´Ì¬£¨Y42£©
+	S_VBUS  = 5,	// è¯»å–æ€»çº¿ç”µå‹
+	S_CBUS  = 6,	// è¯»å–æ€»çº¿ç”µæµ
+	S_CPHA  = 7,	// è¯»å–ç›¸ç”µæµ
+	S_ENCO  = 8,	// è¯»å–ç¼–ç å™¨åŸå§‹å€¼
+	S_CLKC  = 9,	// è¯»å–å®æ—¶è„‰å†²æ•°
+	S_ENCL  = 10,	// è¯»å–ç»è¿‡çº¿æ€§åŒ–æ ¡å‡†åçš„ç¼–ç å™¨å€¼
+	S_CLKI  = 11,	// è¯»å–è¾“å…¥è„‰å†²æ•°
+	S_TPOS  = 12,	// è¯»å–ç”µæœºç›®æ ‡ä½ç½®
+	S_SPOS  = 13,	// è¯»å–ç”µæœºå®æ—¶è®¾å®šçš„ç›®æ ‡ä½ç½®
+	S_VEL   = 14,	// è¯»å–ç”µæœºå®æ—¶è½¬é€Ÿ
+	S_CPOS  = 15,	// è¯»å–ç”µæœºå®æ—¶ä½ç½®
+	S_PERR  = 16,	// è¯»å–ç”µæœºä½ç½®è¯¯å·®
+	S_VBAT  = 17,	// è¯»å–å¤šåœˆç¼–ç å™¨ç”µæ± ç”µå‹ï¼ˆY42ï¼‰
+	S_TEMP  = 18,	// è¯»å–ç”µæœºå®æ—¶æ¸©åº¦ï¼ˆY42ï¼‰
+	S_FLAG  = 19,	// è¯»å–ç”µæœºçŠ¶æ€æ ‡å¿—ä½
+	S_OFLAG = 20, // è¯»å–å›é›¶çŠ¶æ€æ ‡å¿—ä½
+	S_OAF   = 21,	// è¯»å–ç”µæœºçŠ¶æ€æ ‡å¿—ä½ + å›é›¶çŠ¶æ€æ ‡å¿—ä½ï¼ˆY42ï¼‰
+	S_PIN   = 22,	// è¯»å–å¼•è„šçŠ¶æ€ï¼ˆY42ï¼‰
 }SysParams_t;
 
 #define		MMCL_LEN		512
@@ -48,125 +48,125 @@ extern __IO uint16_t MMCL_count, MMCL_cmd[MMCL_LEN];
 ***********************************************************
 *** 
 ***
-*** @brief	ºó×º´øÓĞ£¨Y42£©ÎªY42ĞÂÔöÃüÁî£¬X42²»ÄÜÓÃ£¬ÆäËûÍ¨ÓÃ
+*** @brief	åç¼€å¸¦æœ‰ï¼ˆY42ï¼‰ä¸ºY42æ–°å¢å‘½ä»¤ï¼ŒX42ä¸èƒ½ç”¨ï¼Œå…¶ä»–é€šç”¨
 ***
 *** 
 ***********************************************************
 ***********************************************************
 ***/
 /**********************************************************
-*** ´¥·¢¶¯×÷ÃüÁî
+*** è§¦å‘åŠ¨ä½œå‘½ä»¤
 **********************************************************/
-// ´¥·¢±àÂëÆ÷Ğ£×¼
+// è§¦å‘ç¼–ç å™¨æ ¡å‡†
 void Emm_V5_Trig_Encoder_Cal(UART_HandleTypeDef *huart);
-// ÖØÆôµç»ú£¨Y42£©
+// é‡å¯ç”µæœºï¼ˆY42ï¼‰
 void Emm_V5_Reset_Motor(UART_HandleTypeDef *huart);
-// ½«µ±Ç°Î»ÖÃÇåÁã
+// å°†å½“å‰ä½ç½®æ¸…é›¶
 void Emm_V5_Reset_CurPos_To_Zero(UART_HandleTypeDef *huart);
-// ½â³ı¶Â×ª±£»¤
+// è§£é™¤å µè½¬ä¿æŠ¤
 void Emm_V5_Reset_Clog_Pro(UART_HandleTypeDef *huart);
-// »Ö¸´³ö³§ÉèÖÃ
+// æ¢å¤å‡ºå‚è®¾ç½®
 void Emm_V5_Restore_Motor(UART_HandleTypeDef *huart);
 /**********************************************************
-*** ÔË¶¯¿ØÖÆÃüÁî
+*** è¿åŠ¨æ§åˆ¶å‘½ä»¤
 **********************************************************/
-// ¶àµç»úÃüÁî£¨Y42£©
+// å¤šç”µæœºå‘½ä»¤ï¼ˆY42ï¼‰
 void Emm_V5_Multi_Motor_Cmd(UART_HandleTypeDef *huart);
-// µç»úÊ¹ÄÜ¿ØÖÆ
+// ç”µæœºä½¿èƒ½æ§åˆ¶
 void Emm_V5_En_Control(UART_HandleTypeDef *huart, bool state, bool snF);
-// ËÙ¶ÈÄ£Ê½¿ØÖÆ
+// é€Ÿåº¦æ¨¡å¼æ§åˆ¶
 void Emm_V5_Vel_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, bool snF);
-// Î»ÖÃÄ£Ê½¿ØÖÆ
+// ä½ç½®æ¨¡å¼æ§åˆ¶
 void Emm_V5_Pos_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, uint32_t clk, uint8_t raF, bool snF);
-// ÉèÖÃ¿ìËÙÎ»ÖÃÄ£Ê½µÄÔË¶¯²ÎÊı
+// è®¾ç½®å¿«é€Ÿä½ç½®æ¨¡å¼çš„è¿åŠ¨å‚æ•°
 void Emm_V5_Set_QPos_Params(UART_HandleTypeDef *huart, uint16_t vel, uint8_t acc, uint8_t raF, bool snF);
-// ¿ìËÙÎ»ÖÃÄ£Ê½¿ØÖÆ
+// å¿«é€Ÿä½ç½®æ¨¡å¼æ§åˆ¶
 void Emm_V5_QPos_Control(UART_HandleTypeDef *huart, int32_t clk);
-// ÈÃµç»úÁ¢¼´Í£Ö¹ÔË¶¯
+// è®©ç”µæœºç«‹å³åœæ­¢è¿åŠ¨
 void Emm_V5_Stop_Now(UART_HandleTypeDef *huart, bool snF);
-// ´¥·¢¶à»úÍ¬²½¿ªÊ¼ÔË¶¯
+// è§¦å‘å¤šæœºåŒæ­¥å¼€å§‹è¿åŠ¨
 void Emm_V5_Synchronous_motion(UART_HandleTypeDef *huart);
 /**********************************************************
-*** Ô­µã»ØÁãÃüÁî
+*** åŸç‚¹å›é›¶å‘½ä»¤
 **********************************************************/
-// ÉèÖÃµ¥È¦»ØÁãµÄÁãµãÎ»ÖÃ
+// è®¾ç½®å•åœˆå›é›¶çš„é›¶ç‚¹ä½ç½®
 void Emm_V5_Origin_Set_O(UART_HandleTypeDef *huart, bool svF);
-// ´¥·¢»ØÁã
+// è§¦å‘å›é›¶
 void Emm_V5_Origin_Trigger_Return(UART_HandleTypeDef *huart, uint8_t o_mode, bool snF);
-// Ç¿ÖÆÖĞ¶Ï²¢ÍË³ö»ØÁã
+// å¼ºåˆ¶ä¸­æ–­å¹¶é€€å‡ºå›é›¶
 void Emm_V5_Origin_Interrupt(UART_HandleTypeDef *huart);
-// ¶ÁÈ¡»ØÁã²ÎÊı
+// è¯»å–å›é›¶å‚æ•°
 void Emm_V5_Origin_Read_Params(UART_HandleTypeDef *huart);
-// ĞŞ¸Ä»ØÁã²ÎÊı
+// ä¿®æ”¹å›é›¶å‚æ•°
 void Emm_V5_Origin_Modify_Params(UART_HandleTypeDef *huart, bool svF, uint8_t o_mode, uint8_t o_dir, uint16_t o_vel, uint32_t o_tm, uint16_t sl_vel, uint16_t sl_ma, uint16_t sl_ms, bool potF);
-// ¶ÁÈ¡Åö×²»ØÁã·µ»Ø½Ç¶È£¨X42S/Y42£©
+// è¯»å–ç¢°æ’å›é›¶è¿”å›è§’åº¦ï¼ˆX42S/Y42ï¼‰
 void X_V2_Origin_Read_SL_RP(UART_HandleTypeDef *huart);
-// ĞŞ¸ÄÅö×²»ØÁã·µ»Ø½Ç¶È£¨X42S/Y42£©
+// ä¿®æ”¹ç¢°æ’å›é›¶è¿”å›è§’åº¦ï¼ˆX42S/Y42ï¼‰
 void X_V2_Origin_Modify_SL_RP(UART_HandleTypeDef *huart, bool svF, uint16_t sl_rp);
 /**********************************************************
-*** ¶ÁÈ¡ÏµÍ³²ÎÊıÃüÁî
+*** è¯»å–ç³»ç»Ÿå‚æ•°å‘½ä»¤
 **********************************************************/
-// ¶¨Ê±·µ»ØĞÅÏ¢ÃüÁî£¨Y42£©
+// å®šæ—¶è¿”å›ä¿¡æ¯å‘½ä»¤ï¼ˆY42ï¼‰
 void Emm_V5_Auto_Return_Sys_Params_Timed(UART_HandleTypeDef *huart, SysParams_t s, uint16_t time_ms);
-// ¶ÁÈ¡ÏµÍ³²ÎÊı
+// è¯»å–ç³»ç»Ÿå‚æ•°
 void Emm_V5_Read_Sys_Params(UART_HandleTypeDef *huart, SysParams_t s);
 /**********************************************************
-*** ¶ÁĞ´Çı¶¯²ÎÊıÃüÁî
+*** è¯»å†™é©±åŠ¨å‚æ•°å‘½ä»¤
 **********************************************************/
-// ĞŞ¸Äµç»úIDµØÖ·
+// ä¿®æ”¹ç”µæœºIDåœ°å€
 void Emm_V5_Modify_Motor_ID(UART_HandleTypeDef *huart, bool svF, uint8_t id);
-// ĞŞ¸ÄÏ¸·ÖÖµ
+// ä¿®æ”¹ç»†åˆ†å€¼
 void Emm_V5_Modify_MicroStep(UART_HandleTypeDef *huart, bool svF, uint8_t mstep);
-// ĞŞ¸Äµôµç±êÖ¾
+// ä¿®æ”¹æ‰ç”µæ ‡å¿—
 void Emm_V5_Modify_PDFlag(UART_HandleTypeDef *huart, bool pdf);
-// ¶ÁÈ¡Ñ¡Ïî²ÎÊı×´Ì¬£¨Y42£©
+// è¯»å–é€‰é¡¹å‚æ•°çŠ¶æ€ï¼ˆY42ï¼‰
 void Emm_V5_Read_Opt_Param_Sta(UART_HandleTypeDef *huart);
-// ĞŞ¸Äµç»úÀàĞÍ£¨Y42£©
+// ä¿®æ”¹ç”µæœºç±»å‹ï¼ˆY42ï¼‰
 void Emm_V5_Modify_Motor_Type(UART_HandleTypeDef *huart, bool svF, bool mottype);
-// ĞŞ¸Ä¹Ì¼şÀàĞÍ£¨Y42£©
+// ä¿®æ”¹å›ºä»¶ç±»å‹ï¼ˆY42ï¼‰
 void Emm_V5_Modify_Firmware_Type(UART_HandleTypeDef *huart, bool svF, bool fwtype);
-// ĞŞ¸Ä¿ª»·/±Õ»·¿ØÖÆÄ£Ê½£¨Y42£©
+// ä¿®æ”¹å¼€ç¯/é—­ç¯æ§åˆ¶æ¨¡å¼ï¼ˆY42ï¼‰
 void Emm_V5_Modify_Ctrl_Mode(UART_HandleTypeDef *huart, bool svF, bool ctrl_mode);
-// ĞŞ¸Äµç»úÔË¶¯Õı·½Ïò£¨Y42£©
+// ä¿®æ”¹ç”µæœºè¿åŠ¨æ­£æ–¹å‘ï¼ˆY42ï¼‰
 void Emm_V5_Modify_Motor_Dir(UART_HandleTypeDef *huart, bool svF, bool dir);
-// ĞŞ¸ÄËø¶¨°´¼ü¹¦ÄÜ£¨Y42£©
+// ä¿®æ”¹é”å®šæŒ‰é”®åŠŸèƒ½ï¼ˆY42ï¼‰
 void Emm_V5_Modify_Lock_Btn(UART_HandleTypeDef *huart, bool svF, bool lockbtn);
-// ĞŞ¸ÄÃüÁîËÙ¶ÈÖµÊÇ·ñËõĞ¡10±¶ÊäÈë£¨Y42£©
+// ä¿®æ”¹å‘½ä»¤é€Ÿåº¦å€¼æ˜¯å¦ç¼©å°10å€è¾“å…¥ï¼ˆY42ï¼‰
 void Emm_V5_Modify_S_Vel(UART_HandleTypeDef *huart, bool svF, bool s_vel);
-// ĞŞ¸Ä¿ª»·Ä£Ê½¹¤×÷µçÁ÷
+// ä¿®æ”¹å¼€ç¯æ¨¡å¼å·¥ä½œç”µæµ
 void Emm_V5_Modify_OM_ma(UART_HandleTypeDef *huart, bool svF, uint16_t om_ma);
-// ĞŞ¸Ä±Õ»·Ä£Ê½×î´óµçÁ÷
+// ä¿®æ”¹é—­ç¯æ¨¡å¼æœ€å¤§ç”µæµ
 void Emm_V5_Modify_FOC_mA(UART_HandleTypeDef *huart, bool svF, uint16_t foc_mA);
-// ¶ÁÈ¡PID²ÎÊı
+// è¯»å–PIDå‚æ•°
 void Emm_V5_Read_PID_Params(UART_HandleTypeDef *huart);
-// ĞŞ¸ÄPID²ÎÊı
+// ä¿®æ”¹PIDå‚æ•°
 void Emm_V5_Modify_PID_Params(UART_HandleTypeDef *huart, bool svF, uint32_t kp, uint32_t ki, uint32_t kd);
-// ¶ÁÈ¡DMX512Ğ­Òé²ÎÊı£¨Y42£©
+// è¯»å–DMX512åè®®å‚æ•°ï¼ˆY42ï¼‰
 void Emm_V5_Read_DMX512_Params(UART_HandleTypeDef *huart);
-// ĞŞ¸ÄDMX512Ğ­Òé²ÎÊı£¨Y42£©
+// ä¿®æ”¹DMX512åè®®å‚æ•°ï¼ˆY42ï¼‰
 void Emm_V5_Modify_DMX512_Params(UART_HandleTypeDef *huart, bool svF, uint16_t tch, uint8_t nch, uint8_t mode, uint16_t vel, uint16_t acc, uint16_t vel_step, uint32_t pos_step);
-// ¶ÁÈ¡Î»ÖÃµ½´ï´°¿Ú£¨Y42£©
+// è¯»å–ä½ç½®åˆ°è¾¾çª—å£ï¼ˆY42ï¼‰
 void Emm_V5_Read_Pos_Window(UART_HandleTypeDef *huart);
-// ĞŞ¸ÄÎ»ÖÃµ½´ï´°¿Ú£¨Y42£©
+// ä¿®æ”¹ä½ç½®åˆ°è¾¾çª—å£ï¼ˆY42ï¼‰
 void Emm_V5_Modify_Pos_Window(UART_HandleTypeDef *huart, bool svF, uint16_t prw);
-// ¶ÁÈ¡¹ıÈÈ¹ıÁ÷±£»¤¼ì²âãĞÖµ£¨Y42£©
+// è¯»å–è¿‡çƒ­è¿‡æµä¿æŠ¤æ£€æµ‹é˜ˆå€¼ï¼ˆY42ï¼‰
 void Emm_V5_Read_Otocp(UART_HandleTypeDef *huart);
-// ĞŞ¸Ä¹ıÈÈ¹ıÁ÷±£»¤¼ì²âãĞÖµ£¨Y42£©
+// ä¿®æ”¹è¿‡çƒ­è¿‡æµä¿æŠ¤æ£€æµ‹é˜ˆå€¼ï¼ˆY42ï¼‰
 void Emm_V5_Modify_Otocp(UART_HandleTypeDef *huart, bool svF, uint16_t otp, uint16_t ocp, uint16_t time_ms);
-// ¶ÁÈ¡ĞÄÌø±£»¤¹¦ÄÜÊ±¼ä£¨Y42£©
+// è¯»å–å¿ƒè·³ä¿æŠ¤åŠŸèƒ½æ—¶é—´ï¼ˆY42ï¼‰
 void Emm_V5_Read_Heart_Protect(UART_HandleTypeDef *huart);
-// ĞŞ¸ÄĞÄÌø±£»¤¹¦ÄÜÊ±¼ä£¨Y42£©
+// ä¿®æ”¹å¿ƒè·³ä¿æŠ¤åŠŸèƒ½æ—¶é—´ï¼ˆY42ï¼‰
 void Emm_V5_Modify_Heart_Protect(UART_HandleTypeDef *huart, bool svF, uint32_t hp);
-// ¶ÁÈ¡»ı·ÖÏŞ·ù/¸ÕĞÔÏµÊı£¨Y42£©
+// è¯»å–ç§¯åˆ†é™å¹…/åˆšæ€§ç³»æ•°ï¼ˆY42ï¼‰
 void Emm_V5_Read_Integral_Limit(UART_HandleTypeDef *huart);
-// ĞŞ¸Ä»ı·ÖÏŞ·ù/¸ÕĞÔÏµÊı£¨Y42£©
+// ä¿®æ”¹ç§¯åˆ†é™å¹…/åˆšæ€§ç³»æ•°ï¼ˆY42ï¼‰
 void Emm_V5_Modify_Integral_Limit(UART_HandleTypeDef *huart, bool svF, uint32_t il);
 /**********************************************************
-*** ¶ÁÈ¡ËùÓĞÇı¶¯²ÎÊıÃüÁî
+*** è¯»å–æ‰€æœ‰é©±åŠ¨å‚æ•°å‘½ä»¤
 **********************************************************/
-// ¶ÁÈ¡ÏµÍ³×´Ì¬²ÎÊı
+// è¯»å–ç³»ç»ŸçŠ¶æ€å‚æ•°
 void Emm_V5_Read_System_State_Params(UART_HandleTypeDef *huart);
-// ¶ÁÈ¡Çı¶¯ÅäÖÃ²ÎÊı
+// è¯»å–é©±åŠ¨é…ç½®å‚æ•°
 void Emm_V5_Read_Motor_Conf_Params(UART_HandleTypeDef *huart);
 
 /**
@@ -174,66 +174,66 @@ void Emm_V5_Read_Motor_Conf_Params(UART_HandleTypeDef *huart);
 ***********************************************************
 *** 
 ***
-*** @brief	ÒÔÏÂÊÇ°ÑÏàÓ¦ÃüÁî¼ÓÔØµ½Y42¶àµç»úÃüÁîÉÏµÄº¯Êı£¨Y42£©
+*** @brief	ä»¥ä¸‹æ˜¯æŠŠç›¸åº”å‘½ä»¤åŠ è½½åˆ°Y42å¤šç”µæœºå‘½ä»¤ä¸Šçš„å‡½æ•°ï¼ˆY42ï¼‰
 ***
 *** 
 ***********************************************************
 ***********************************************************
 ***/
 /**********************************************************
-*** ´¥·¢¶¯×÷ÃüÁî
+*** è§¦å‘åŠ¨ä½œå‘½ä»¤
 **********************************************************/
-// ´¥·¢±àÂëÆ÷Ğ£×¼ - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// è§¦å‘ç¼–ç å™¨æ ¡å‡† - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Trig_Encoder_Cal(UART_HandleTypeDef *huart);
-// ÖØÆôµç»ú - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// é‡å¯ç”µæœº - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Reset_Motor(UART_HandleTypeDef *huart);
-// ½«µ±Ç°Î»ÖÃÇåÁã - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// å°†å½“å‰ä½ç½®æ¸…é›¶ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Reset_CurPos_To_Zero(UART_HandleTypeDef *huart);
-// ½â³ı¶Â×ª±£»¤ - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// è§£é™¤å µè½¬ä¿æŠ¤ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Reset_Clog_Pro(UART_HandleTypeDef *huart);
-// »Ö¸´³ö³§ÉèÖÃ - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// æ¢å¤å‡ºå‚è®¾ç½® - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Restore_Motor(UART_HandleTypeDef *huart);
 /**********************************************************
-*** ÔË¶¯¿ØÖÆÃüÁî
+*** è¿åŠ¨æ§åˆ¶å‘½ä»¤
 **********************************************************/
-// µç»úÊ¹ÄÜ¿ØÖÆ - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// ç”µæœºä½¿èƒ½æ§åˆ¶ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_En_Control(UART_HandleTypeDef *huart, bool state, bool snF);
-// ËÙ¶ÈÄ£Ê½¿ØÖÆ - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// é€Ÿåº¦æ¨¡å¼æ§åˆ¶ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Vel_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, bool snF);
-// Î»ÖÃÄ£Ê½¿ØÖÆ - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// ä½ç½®æ¨¡å¼æ§åˆ¶ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Pos_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, uint32_t clk, uint8_t raF, bool snF);
-// ÉèÖÃ¿ìËÙÎ»ÖÃÄ£Ê½µÄÔË¶¯²ÎÊı
+// è®¾ç½®å¿«é€Ÿä½ç½®æ¨¡å¼çš„è¿åŠ¨å‚æ•°
 void Emm_V5_MMCL_Set_QPos_Params(UART_HandleTypeDef *huart, uint16_t vel, uint8_t acc, uint8_t raF, bool snF);
-// ¿ìËÙÎ»ÖÃÄ£Ê½¿ØÖÆ
+// å¿«é€Ÿä½ç½®æ¨¡å¼æ§åˆ¶
 void Emm_V5_MMCL_QPos_Control(UART_HandleTypeDef *huart, int32_t clk);
-// ÈÃµç»úÁ¢¼´Í£Ö¹ÔË¶¯ - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// è®©ç”µæœºç«‹å³åœæ­¢è¿åŠ¨ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Stop_Now(UART_HandleTypeDef *huart, bool snF);
-// ´¥·¢¶à»úÍ¬²½¿ªÊ¼ÔË¶¯ - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// è§¦å‘å¤šæœºåŒæ­¥å¼€å§‹è¿åŠ¨ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Synchronous_motion(UART_HandleTypeDef *huart);
 /**********************************************************
-*** Ô­µã»ØÁãÃüÁî
+*** åŸç‚¹å›é›¶å‘½ä»¤
 **********************************************************/
-// ÉèÖÃµ¥È¦»ØÁãµÄÁãµãÎ»ÖÃ - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// è®¾ç½®å•åœˆå›é›¶çš„é›¶ç‚¹ä½ç½® - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Origin_Set_O(UART_HandleTypeDef *huart, bool svF);
-// ´¥·¢»ØÁã - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// è§¦å‘å›é›¶ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Origin_Trigger_Return(UART_HandleTypeDef *huart, uint8_t o_mode, bool snF);
-// Ç¿ÖÆÖĞ¶Ï²¢ÍË³ö»ØÁã - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// å¼ºåˆ¶ä¸­æ–­å¹¶é€€å‡ºå›é›¶ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Origin_Interrupt(UART_HandleTypeDef *huart);
-// ĞŞ¸Ä»ØÁã²ÎÊı - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// ä¿®æ”¹å›é›¶å‚æ•° - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Origin_Modify_Params(UART_HandleTypeDef *huart, bool svF, uint8_t o_mode, uint8_t o_dir, uint16_t o_vel, uint32_t o_tm, uint16_t sl_vel, uint16_t sl_ma, uint16_t sl_ms, bool potF);
-// ¶ÁÈ¡Åö×²»ØÁã·µ»Ø½Ç¶È£¨X42S/Y42£© - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// è¯»å–ç¢°æ’å›é›¶è¿”å›è§’åº¦ï¼ˆX42S/Y42ï¼‰ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void X_V2_MMCL_Origin_Read_SL_RP(UART_HandleTypeDef *huart);
-// ĞŞ¸ÄÅö×²»ØÁã·µ»Ø½Ç¶È£¨X42S/Y42£© - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// ä¿®æ”¹ç¢°æ’å›é›¶è¿”å›è§’åº¦ï¼ˆX42S/Y42ï¼‰ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void X_V2_MMCL_Origin_Modify_SL_RP(UART_HandleTypeDef *huart, bool svF, uint16_t sl_rp);
 /**********************************************************
-*** ¶ÁÈ¡ÏµÍ³²ÎÊıÃüÁî
+*** è¯»å–ç³»ç»Ÿå‚æ•°å‘½ä»¤
 **********************************************************/
-// ¶¨Ê±·µ»ØĞÅÏ¢ÃüÁî£¨Y42£© - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// å®šæ—¶è¿”å›ä¿¡æ¯å‘½ä»¤ï¼ˆY42ï¼‰ - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Auto_Return_Sys_Params_Timed(UART_HandleTypeDef *huart, SysParams_t s, uint16_t time_ms);
-// ¶ÁÈ¡ÏµÍ³²ÎÊı - ¼ÓÔØµ½¶àµç»úÖ¸ÁîÉÏ
+// è¯»å–ç³»ç»Ÿå‚æ•° - åŠ è½½åˆ°å¤šç”µæœºæŒ‡ä»¤ä¸Š
 void Emm_V5_MMCL_Read_Sys_Params(UART_HandleTypeDef *huart, SysParams_t s);
 /**********************************************************
-*** ¶ÁĞ´Çı¶¯²ÎÊıÃüÁî
+*** è¯»å†™é©±åŠ¨å‚æ•°å‘½ä»¤
 **********************************************************/
 
 #endif

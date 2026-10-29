@@ -22,12 +22,16 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* SPI 编码：用 1 个 SPI 字节表示 1 个 WS2812 bit */
-#define WS2812_CODE_0  0xC0  /* 11000000 - 表示逻辑 0 */
+/* SPI 编码：用 1 个 SPI 字节表示 1 个 WS2812 bit。
+   SPI 时钟 7.5MHz（APB2 / 8），1 bit ≈ 133ns：
+   - 逻辑 0 -> 0x80（1个高位，约 133ns），低于这组芯片的阈值 → 读成 0
+   - 逻辑 1 -> 0xF8（5个高位，约 667ns），高于阈值 → 读成 1 */
+#define WS2812_CODE_0  0x80  /* 10000000 - 表示逻辑 0 */
 #define WS2812_CODE_1  0xF8  /* 11111000 - 表示逻辑 1 */
 
-/* 缓冲区大小：每个灯珠 24 字节编码 + 80 字节复位 */
-#define WS2812_SPI_BUF_SIZE  ((WS2812_LED_NUM * 24) + 80)
+/* 缓冲区大小：每个灯珠 24 字节编码 + 200 字节复位码 + 1 字节起始清洁 */
+#define WS2812_SPI_BUF_SIZE  ((WS2812_LED_NUM * 24) + 201)
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -186,6 +190,9 @@ HAL_StatusTypeDef WS2812_Show(void)
 
   uint16_t buf_idx = 0;
   
+  /* 先发一个 0x00 字节，让 MOSI 从清晰的低电平开始发送，消除帧起始跳变沿干扰 */
+  spi_buf[buf_idx++] = 0x00;
+  
   /* 编码所有灯珠数据 */
   for (uint16_t led = 0; led < WS2812_LED_NUM; led++)
   {
@@ -210,8 +217,9 @@ HAL_StatusTypeDef WS2812_Show(void)
     }
   }
   
-  /* 添加复位码：发送 0x00 保持低电平 >= 50us */
-  for (uint16_t i = 0; i < 80; i++)
+/* 添加复位码：发送 0x00 保持低电平 >= 50us
+   用 200 字节确保足够长的复位窗口（~85us@7.5MHz×2.5≈213us） */
+  for (uint16_t i = 0; i < 200; i++)
   {
     spi_buf[buf_idx++] = 0x00;
   }

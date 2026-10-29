@@ -21,7 +21,7 @@
 #include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
+ /* USER CODE BEGIN Includes */
 #include "uart1_comm.h"
 #include "ws2812_spi.h"
 /* USER CODE END Includes */
@@ -146,6 +146,16 @@ int main(void)
   /* USER CODE BEGIN 2 */
   Uart1Comm_Init();
   WS2812_Init();
+  /* PD12 (TIM4_CH1) 输出方波用于调试系统时钟，方便测量实际频率 */
+  __HAL_TIM_DISABLE(&htim4);
+  htim4.Instance->PSC  = 0;
+  htim4.Instance->ARR  = 59999;
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  sConfigOC.OCMode     = TIM_OCMODE_TOGGLE;
+  sConfigOC.Pulse      = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  HAL_TIM_OC_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1);
+  __HAL_TIM_ENABLE(&htim4);
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -193,8 +203,8 @@ int main(void)
     .priority = (osPriority_t) osPriorityNormal,
   };
   osThreadNew(WS2812Task, NULL, &ws2812Task_attributes);
-  /* USER CODE END RTOS_THREADS */
 
+  /* USER CODE END RTOS_THREADS */
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
@@ -365,7 +375,12 @@ static void MX_SPI1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN SPI1_Init 2 */
-
+  /* WS2812 时序：SPI 时钟 7.5MHz（APB2 60MHz / 8），0x80/0xF8 编码 */
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE END SPI1_Init 2 */
 
 }

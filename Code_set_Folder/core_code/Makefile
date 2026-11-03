@@ -57,6 +57,9 @@ Core/Src/sysmem.c \
 Core/Src/syscalls.c \
 Core/Src/freertos.c \
 Core/Src/uart1_comm.c \
+Core/Src/Emm_V5.c \
+Core/Src/stepper_motor.c \
+Core/Src/corexy.c \
 Core/Src/ws2812_spi.c \
 Middlewares/Third_Party/FreeRTOS/Source/croutine.c \
 Middlewares/Third_Party/FreeRTOS/Source/event_groups.c \

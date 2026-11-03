@@ -15,7 +15,7 @@
 #include "FreeRTOS.h"
 
 /* USER CODE BEGIN Includes */
-
+#include "stepper_motor.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -177,6 +177,9 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 
   /* USER CODE BEGIN HAL_UARTEx_RxEventCallback 1 */
 
+  /* 四路步进电机串口的应答由 stepper_motor 模块自行解析并重新开启接收 */
+  StepperMotor_RxEventCallback(huart, Size);
+
   /* USER CODE END HAL_UARTEx_RxEventCallback 1 */
 }
 
@@ -230,6 +233,8 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   }
 
   /* USER CODE BEGIN HAL_UART_ErrorCallback 1 */
+
+  StepperMotor_ErrorCallback(huart);
 
   /* USER CODE END HAL_UART_ErrorCallback 1 */
 }

@@ -1,12 +1,7 @@
 #ifndef __EMM_V5_H
 #define __EMM_V5_H
 
-#include "usart.h"
 #include "main.h"
-#include "dma.h"
-#include "i2c.h"
-#include "tim.h"
-#include "gpio.h"
 #include <stdbool.h>
 /**********************************************************
 ***	Emm_V5.0步进闭环控制例程
@@ -75,17 +70,17 @@ void Emm_V5_Multi_Motor_Cmd(UART_HandleTypeDef *huart);
 // 电机使能控制
 void Emm_V5_En_Control(UART_HandleTypeDef *huart, bool state, bool snF);
 // 速度模式控制
-void Emm_V5_Vel_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, bool snF);
+HAL_StatusTypeDef Emm_V5_Vel_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, bool snF);
 // 位置模式控制
-void Emm_V5_Pos_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, uint32_t clk, uint8_t raF, bool snF);
+HAL_StatusTypeDef Emm_V5_Pos_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, uint32_t clk, uint8_t raF, bool snF);
 // 设置快速位置模式的运动参数
 void Emm_V5_Set_QPos_Params(UART_HandleTypeDef *huart, uint16_t vel, uint8_t acc, uint8_t raF, bool snF);
 // 快速位置模式控制
 void Emm_V5_QPos_Control(UART_HandleTypeDef *huart, int32_t clk);
 // 让电机立即停止运动
-void Emm_V5_Stop_Now(UART_HandleTypeDef *huart, bool snF);
+HAL_StatusTypeDef Emm_V5_Stop_Now(UART_HandleTypeDef *huart, bool snF);
 // 触发多机同步开始运动
-void Emm_V5_Synchronous_motion(UART_HandleTypeDef *huart);
+HAL_StatusTypeDef Emm_V5_Synchronous_motion(UART_HandleTypeDef *huart);
 /**********************************************************
 *** 原点回零命令
 **********************************************************/
@@ -109,7 +104,7 @@ void X_V2_Origin_Modify_SL_RP(UART_HandleTypeDef *huart, bool svF, uint16_t sl_r
 // 定时返回信息命令（Y42）
 void Emm_V5_Auto_Return_Sys_Params_Timed(UART_HandleTypeDef *huart, SysParams_t s, uint16_t time_ms);
 // 读取系统参数
-void Emm_V5_Read_Sys_Params(UART_HandleTypeDef *huart, SysParams_t s);
+HAL_StatusTypeDef Emm_V5_Read_Sys_Params(UART_HandleTypeDef *huart, SysParams_t s);
 /**********************************************************
 *** 读写驱动参数命令
 **********************************************************/

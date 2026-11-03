@@ -169,14 +169,15 @@ void Emm_V5_En_Control(UART_HandleTypeDef *huart, bool state, bool snF)
 
 /**
   * @brief    速度模式
+  * @details  封装并通过 UART DMA 发送速度命令，返回 HAL 发送状态。
   * @param    huart：电机地址
   * @param    dir ：方向       ，0为CW，其余值为CCW
   * @param    vel ：速度       ，范围0 - 5000RPM
   * @param    acc ：加速度     ，范围0 - 255，注意：0是直接启动
   * @param    snF ：多机同步标志，false为不启用，true为启用
-  * @retval   地址 + 功能码 + 命令状态 + 校验字节
+  * @retval   HAL UART/DMA 发送状态
   */
-void Emm_V5_Vel_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, bool snF)
+HAL_StatusTypeDef Emm_V5_Vel_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, bool snF)
 {
   __IO static uint8_t cmd[16] = {0};
 
@@ -191,11 +192,12 @@ void Emm_V5_Vel_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, ui
   cmd[7] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(huart, (uint8_t *)cmd, 8);
+  return HAL_UART_Transmit_DMA(huart, (uint8_t *)cmd, 8);
 }
 
 /**
   * @brief    位置模式
+  * @details  封装并通过 UART DMA 发送位置命令，返回 HAL 发送状态。
   * @param    huart：电机地址
   * @param    dir ：方向        ，0为CW，其余值为CCW
   * @param    vel ：速度(RPM)   ，范围0 - 5000RPM
@@ -203,9 +205,9 @@ void Emm_V5_Vel_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, ui
   * @param    clk ：脉冲数      ，范围0- (2^32 - 1)个
   * @param    raF ：运动标志，0为相对上一输入目标位置进行相对位置运动，1为绝对值运动，2相对当前电机实时位置进行相对位置运动
   * @param    snF ：多机同步标志 ，false为不启用，true为启用
-  * @retval   地址 + 功能码 + 命令状态 + 校验字节
+  * @retval   HAL UART/DMA 发送状态
   */
-void Emm_V5_Pos_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, uint32_t clk, uint8_t raF, bool snF)
+HAL_StatusTypeDef Emm_V5_Pos_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, uint8_t acc, uint32_t clk, uint8_t raF, bool snF)
 {
   __IO static uint8_t cmd[16] = {0};
 
@@ -225,7 +227,7 @@ void Emm_V5_Pos_Control(UART_HandleTypeDef *huart, uint8_t dir, uint16_t vel, ui
   cmd[12] =  0x6B;                      // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(huart, (uint8_t *)cmd, 13);
+  return HAL_UART_Transmit_DMA(huart, (uint8_t *)cmd, 13);
 }
 
 /**
@@ -280,11 +282,12 @@ void Emm_V5_QPos_Control(UART_HandleTypeDef *huart, int32_t clk)
 
 /**
   * @brief    立即停止
+  * @details  封装并通过 UART DMA 发送立即停止命令，返回 HAL 发送状态。
   * @param    huart  ：电机地址
   * @param    snF   ：多机同步标志，false为不启用，true为启用
-  * @retval   地址 + 功能码 + 命令状态 + 校验字节
+  * @retval   HAL UART/DMA 发送状态
   */
-void Emm_V5_Stop_Now(UART_HandleTypeDef *huart, bool snF)
+HAL_StatusTypeDef Emm_V5_Stop_Now(UART_HandleTypeDef *huart, bool snF)
 {
   __IO static uint8_t cmd[16] = {0};
   
@@ -296,26 +299,21 @@ void Emm_V5_Stop_Now(UART_HandleTypeDef *huart, bool snF)
   cmd[4] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(huart, (uint8_t *)cmd, 5);
+  return HAL_UART_Transmit_DMA(huart, (uint8_t *)cmd, 5);
 }
 
 /**
   * @brief    多机同步运动
+  * @details  发送不可变同步触发帧；共享帧缓冲区允许多路 UART DMA 紧接启动。
   * @param    huart  ：电机地址
-  * @retval   地址 + 功能码 + 命令状态 + 校验字节
+  * @retval   HAL UART/DMA 发送状态
   */
-void Emm_V5_Synchronous_motion(UART_HandleTypeDef *huart)
+HAL_StatusTypeDef Emm_V5_Synchronous_motion(UART_HandleTypeDef *huart)
 {
-  __IO static uint8_t cmd[16] = {0};
-  
-  // 装载命令
-  cmd[0] = 0x01;                       // 地址
-  cmd[1] =  0xFF;                       // 功能码
-  cmd[2] =  0x66;                       // 辅助码
-  cmd[3] =  0x6B;                       // 校验字节
+  static uint8_t cmd[4] = {0x01, 0xFF, 0x66, 0x6B};
   
   // 发送命令
-  HAL_UART_Transmit_DMA(huart, (uint8_t *)cmd, 4);
+  return HAL_UART_Transmit_DMA(huart, (uint8_t *)cmd, 4);
 }
 
 /**********************************************************
@@ -542,11 +540,12 @@ void Emm_V5_Auto_Return_Sys_Params_Timed(UART_HandleTypeDef *huart, SysParams_t 
 
 /**
   * @brief    读取系统参数
+  * @details  编码指定的系统参数读取命令并通过 UART DMA 发送。
   * @param    huart  ：电机地址
   * @param    s     ：系统参数类型
-  * @retval   地址 + 功能码 + 命令状态 + 校验字节
+  * @retval   HAL UART/DMA 发送状态
   */
-void Emm_V5_Read_Sys_Params(UART_HandleTypeDef *huart, SysParams_t s)
+HAL_StatusTypeDef Emm_V5_Read_Sys_Params(UART_HandleTypeDef *huart, SysParams_t s)
 {
   uint8_t i = 0; __IO static uint8_t cmd[16] = {0};
   
@@ -579,7 +578,7 @@ void Emm_V5_Read_Sys_Params(UART_HandleTypeDef *huart, SysParams_t s)
   cmd[i] = 0x6B; ++i;                   // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(huart, (uint8_t *)cmd, i);
+  return HAL_UART_Transmit_DMA(huart, (uint8_t *)cmd, i);
 }
 
 /**********************************************************

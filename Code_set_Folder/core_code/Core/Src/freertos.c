@@ -27,6 +27,7 @@
 #include "cmsis_os2.h"
 #include "uart1_comm.h"
 #include "ws2812_spi.h"
+#include "WaterPump.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -92,6 +93,7 @@ void WS2812Task(void *argument);
  * @retval 无
  */
 void PA10BlinkTask(void *argument);
+void WaterPumpTask(void *argument);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -291,5 +293,26 @@ void PA10BlinkTask(void *argument)
   }
 }
 
+/**
+ * @brief 周期性启停水泵，用于验证水泵模块与调度器协作。
+ *
+ * @details 任务循环调用水泵启停接口，并在每个状态保持 3 秒；接口内部使用 osDelay，
+ * 因此必须在任务上下文运行。任务由 main.c 创建，参数未使用且不会返回。
+ *
+ * @param argument 未使用
+ * @retval 无
+ */
+void WaterPumpTask(void *argument)
+{
+  (void)argument;
+
+  for (;;)
+  {
+    WaterPump_Start();
+    osDelay(3000);
+    WaterPump_Stop();
+    osDelay(3000);
+  }
+}
 /* USER CODE END Application */
 

@@ -61,6 +61,7 @@ Core/Src/Emm_V5.c \
 Core/Src/stepper_motor.c \
 Core/Src/corexy.c \
 Core/Src/ws2812_spi.c \
+Core/Src/WaterPump.c \
 Middlewares/Third_Party/FreeRTOS/Source/croutine.c \
 Middlewares/Third_Party/FreeRTOS/Source/event_groups.c \
 Middlewares/Third_Party/FreeRTOS/Source/list.c \

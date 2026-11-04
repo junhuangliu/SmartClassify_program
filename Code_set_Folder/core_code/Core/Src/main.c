@@ -24,6 +24,7 @@
  /* USER CODE BEGIN Includes */
 #include "uart1_comm.h"
 #include "ws2812_spi.h"
+#include "WaterPump.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -94,6 +95,7 @@ void StartDefaultTask(void *argument);
 /* USER CODE BEGIN PFP */
 void Uart1RxTask(void *argument);
 void WS2812Task(void *argument);
+void WaterPumpTask(void *argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -146,16 +148,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
   Uart1Comm_Init();
   WS2812_Init();
-  /* PD12 (TIM4_CH1) 输出方波用于调试系统时钟，方便测量实际频率 */
-  __HAL_TIM_DISABLE(&htim4);
-  htim4.Instance->PSC  = 0;
-  htim4.Instance->ARR  = 59999;
-  TIM_OC_InitTypeDef sConfigOC = {0};
-  sConfigOC.OCMode     = TIM_OCMODE_TOGGLE;
-  sConfigOC.Pulse      = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  HAL_TIM_OC_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1);
-  __HAL_TIM_ENABLE(&htim4);
+  /* 泵/阀 PWM 先置零输出，保证调度器启动前执行机构不动作；真正启停放到 WaterPumpTask */
+  WaterPump_Init();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -204,6 +198,12 @@ int main(void)
   };
   osThreadNew(WS2812Task, NULL, &ws2812Task_attributes);
 
+  const osThreadAttr_t waterPumpTask_attributes = {
+    .name = "WaterPumpTask",
+    .stack_size = 128 * 4,
+    .priority = (osPriority_t) osPriorityNormal,
+  };
+  osThreadNew(WaterPumpTask, NULL, &waterPumpTask_attributes);
   /* USER CODE END RTOS_THREADS */
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
@@ -473,7 +473,7 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 0 */
 
-  TIM_SlaveConfigTypeDef sSlaveConfig = {0};
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
 
@@ -490,13 +490,12 @@ static void MX_TIM4_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_EXTERNAL1;
-  sSlaveConfig.InputTrigger = TIM_TS_ITR0;
-  if (HAL_TIM_SlaveConfigSynchro(&htim4, &sSlaveConfig) != HAL_OK)
+  if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
   {
     Error_Handler();
   }
@@ -527,7 +526,8 @@ static void MX_TIM4_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM4_Init 2 */
-
+  /* PWM 周期由水泵模块定义；时钟源和 Prescaler 使用 CubeMX 配置。 */
+  __HAL_TIM_SET_AUTORELOAD(&htim4, PUMP_PWM_PERIOD);
   /* USER CODE END TIM4_Init 2 */
   HAL_TIM_MspPostInit(&htim4);
 

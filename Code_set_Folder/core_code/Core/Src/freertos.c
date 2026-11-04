@@ -119,24 +119,31 @@ void Uart1RxTask(void *argument)
 
   /* 上电后主动发送一条启动提示，便于确认串口发送通路正常 */
   static const char boot_msg[] = "SmartClassify UART1 ready\r\n";
+  static const char tick_msg[] = "UART1 tick\r\n";
   Uart1Comm_Send((const uint8_t *)boot_msg, sizeof(boot_msg) - 1);
 
   for (;;)
   {
     if (rxQueue != NULL)
     {
-      if (osMessageQueueGet(rxQueue, &msg, NULL, osWaitForever) == osOK)
+      if (osMessageQueueGet(rxQueue, &msg, NULL, 1000) == osOK)
       {
-        if ((msg.pData != NULL) && (msg.len > 0))
+        if (msg.len > 0U)
         {
           /* 底层联调：收到什么就发回去，用于验证收发通路 */
-          Uart1Comm_Send(msg.pData, msg.len);
+          Uart1Comm_Send(msg.data, msg.len);
         }
+      }
+      else
+      {
+        /* 空闲 1s 发一次心跳，便于观察串口是否在线 */
+        Uart1Comm_Send((const uint8_t *)tick_msg, sizeof(tick_msg) - 1);
       }
     }
     else
     {
-      osDelay(10);
+      osDelay(1000);
+      Uart1Comm_Send((const uint8_t *)tick_msg, sizeof(tick_msg) - 1);
     }
   }
 }
@@ -149,7 +156,8 @@ void Uart1RxTask(void *argument)
  * - 实现要点：7色彩虹调色板（GRB顺序），每帧四个位置分配相邻三种色相；
  *   phase 逐帧+1使彩虹颜色流动变化
  * - 数据流：仅操作 RGB 缓冲区，由 WS2812_Show() 统一编码并通过 SPI1 发送
- * - 注意事项：亮度始终全开，osDelay(100) = 100ms/帧
+ * - 注意事项：亮度始终全开，osDelay(150) = 150ms/帧（时钟修正为真实 120MHz 后，
+ *   按原 38.4MHz 误配下的观感等比放慢约 3 倍）
  * 
  * @param argument 未使用
  * @retval 无
@@ -177,7 +185,7 @@ void WS2812Task(void *argument)
   {
     if (running_rainbow)
     {
-      /* ===== 彩虹流动模式，持续 7s ===== */
+      /* ===== 彩虹流动模式，持续约 21s ===== */
       uint16_t frame_count = 0;
       for (; frame_count < 140; frame_count++)
       {
@@ -191,13 +199,13 @@ void WS2812Task(void *argument)
         }
         WS2812_Show();
         phase = (phase + 1) % 7;
-        osDelay(50);
+        osDelay(150);
       }
       running_rainbow = 0;
     }
     else
     {
-      /* ===== 闪烁灯模式，持续 4s ===== */
+      /* ===== 闪烁灯模式，各模式按原观感放慢约 3 倍 ===== */
       switch (mode % 4)
       {
         case 0:
@@ -206,10 +214,10 @@ void WS2812Task(void *argument)
           {
             WS2812_SetAll(255, 255, 255);
             WS2812_Show();
-            osDelay(20);
+            osDelay(60);
             WS2812_SetAll(0, 0, 0);
             WS2812_Show();
-            osDelay(20);
+            osDelay(60);
           }
           break;
           
@@ -221,7 +229,7 @@ void WS2812Task(void *argument)
             {
               WS2812_SetAll(colors[c][0], colors[c][1], colors[c][2]);
               WS2812_Show();
-              osDelay(500);
+              osDelay(1500);
             }
           }
           break;
@@ -245,7 +253,7 @@ void WS2812Task(void *argument)
               WS2812_SetPixel(3, 255, 0, 0);
             }
             WS2812_Show();
-            osDelay(300);
+            osDelay(900);
           }
           break;
           
@@ -264,7 +272,7 @@ void WS2812Task(void *argument)
               WS2812_SetPixel(2, 255, 0, 255);
             }
             WS2812_Show();
-            osDelay(400);
+            osDelay(1200);
           }
           break;
       }

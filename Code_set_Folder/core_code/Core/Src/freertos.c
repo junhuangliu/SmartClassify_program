@@ -117,6 +117,10 @@ void Uart1RxTask(void *argument)
   osMessageQueueId_t rxQueue = Uart1Comm_GetRxQueueHandle();
   Uart1RxMsg_t msg;
 
+  /* 上电后主动发送一条启动提示，便于确认串口发送通路正常 */
+  static const char boot_msg[] = "SmartClassify UART1 ready\r\n";
+  Uart1Comm_Send((const uint8_t *)boot_msg, sizeof(boot_msg) - 1);
+
   for (;;)
   {
     if (rxQueue != NULL)

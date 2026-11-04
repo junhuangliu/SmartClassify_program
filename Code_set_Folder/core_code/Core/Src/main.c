@@ -21,7 +21,7 @@
 #include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
- /* USER CODE BEGIN Includes */
+/* USER CODE BEGIN Includes */
 #include "uart1_comm.h"
 #include "ws2812_spi.h"
 /* USER CODE END Includes */
@@ -57,8 +57,8 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 UART_HandleTypeDef huart6;
-DMA_HandleTypeDef hdma_usart1_tx;
 DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart1_tx;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
@@ -205,6 +205,7 @@ int main(void)
   osThreadNew(WS2812Task, NULL, &ws2812Task_attributes);
 
   /* USER CODE END RTOS_THREADS */
+
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */

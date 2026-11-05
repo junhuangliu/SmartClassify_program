@@ -10,6 +10,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "uart1_proto.h"
 #include "pump.h"
+#include "corexy.h"
+#include "cmsis_os2.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +44,7 @@ static char proto_line[UART1_PROTO_LINE_MAX];
 static uint16_t proto_line_len = 0U;
 static uint8_t proto_line_overflow = 0U;
 static char proto_reply[64];
+static osMutexId_t proto_tx_mutex = NULL;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -57,7 +60,8 @@ static int Uart1Proto_ParsePercent(const char *text, uint8_t *out_percent);
 /**
  * @brief 初始化命令解析模块
  *
- * @details 清空内部行缓冲和溢出标志；USART1 的 DMA 接收由 uart1_comm 负责
+ * @details 清空内部行缓冲和溢出标志；USART1 的 DMA 接收由 uart1_comm 负责。
+ *          同时创建发送互斥锁，避免 Uart1RxTask 与 CoreXYTask 同时阻塞发送时互相踩踏。
  *
  * @param 无
  * @retval 无
@@ -67,6 +71,11 @@ void Uart1Proto_Init(void)
   proto_line_len = 0U;
   proto_line_overflow = 0U;
   proto_line[0] = '\0';
+
+  if (proto_tx_mutex == NULL)
+  {
+    proto_tx_mutex = osMutexNew(NULL);
+  }
 }
 
 /**
@@ -74,7 +83,8 @@ void Uart1Proto_Init(void)
  *
  * @details
  * - 设计意图：给命令解析提供简单可靠的回复通道
- * - 实现要点：strlen 得到长度后用阻塞式 HAL_UART_Transmit 发送，超时 100ms
+ * - 实现要点：strlen 得到长度后用阻塞式 HAL_UART_Transmit 发送，超时 100ms；
+ *   使用互斥锁串行化 Uart1RxTask 与 CoreXYTask 的发送
  * - 注意事项：返回时数据已发送完成，因此调用者可以使用临时/静态缓冲区
  *
  * @param str 以 '\0' 结尾的字符串
@@ -95,7 +105,18 @@ void Uart1Proto_Send(const char *str)
     return;
   }
 
+  if ((proto_tx_mutex != NULL) &&
+      (osMutexAcquire(proto_tx_mutex, osWaitForever) != osOK))
+  {
+    return;
+  }
+
   HAL_UART_Transmit(&huart1, (uint8_t *)str, len, 100U);
+
+  if (proto_tx_mutex != NULL)
+  {
+    (void)osMutexRelease(proto_tx_mutex);
+  }
 }
 
 /**
@@ -165,11 +186,12 @@ void Uart1Proto_Feed(const uint8_t *data, uint16_t len)
  * @brief 处理一整行命令
  *
  * @details
- * - 设计意图：把文本命令翻译成水泵动作，支持 `key:value` 形式
+ * - 设计意图：把文本命令翻译成水泵/CoreXY 动作，支持 `key:value` 形式
  * - 实现要点：
  *   1. 用 strtok 取出首个词，再按 ':' 拆成 key/value
- *   2. pump:<0~100> 设置占空比；switch:1/0 开关泵
- *   3. STATUS/PING 保留用于调试
+ *   2. init:1 请求碰撞回零；init:0 中止回零并停止电机
+ *   3. pump:<0~100> 设置占空比；switch:1/0 开关泵
+ *   4. STATUS 同时返回水泵和 CoreXY 状态；PING 保留用于调试
  * - 注意事项：proto_line 会被 strtok 原地修改，只在解析期间使用
  *
  * @param line 以 '\0' 结尾的一行命令
@@ -202,9 +224,10 @@ static void Uart1Proto_ProcessLine(char *line)
     if (Uart1Proto_StrIeq(token, "STATUS") != 0)
     {
       (void)snprintf(proto_reply, sizeof(proto_reply),
-                     "STATUS PUMP=%s %u\r\n",
+                     "STATUS PUMP=%s %u COREXY=%s\r\n",
                      (Pump_IsOn() != 0U) ? "ON" : "OFF",
-                     (unsigned int)Pump_GetDuty());
+                     (unsigned int)Pump_GetDuty(),
+                     CoreXY_GetStateString());
       Uart1Proto_Send(proto_reply);
       return;
     }
@@ -217,6 +240,43 @@ static void Uart1Proto_ProcessLine(char *line)
   *colon = '\0';
   key = token;
   value = colon + 1;
+
+  if (Uart1Proto_StrIeq(key, "INIT") != 0)
+  {
+    if (Uart1Proto_StrIeq(value, "1") != 0)
+    {
+      HAL_StatusTypeDef status = CoreXY_RequestHome();
+      if (status == HAL_OK)
+      {
+        Uart1Proto_Send("OK INIT=1\r\n");
+      }
+      else if (status == HAL_BUSY)
+      {
+        Uart1Proto_Send("ERR BUSY\r\n");
+      }
+      else
+      {
+        Uart1Proto_Send("ERR COREXY\r\n");
+      }
+      return;
+    }
+
+    if (Uart1Proto_StrIeq(value, "0") != 0)
+    {
+      if (CoreXY_RequestAbort() == HAL_OK)
+      {
+        Uart1Proto_Send("OK INIT=0\r\n");
+      }
+      else
+      {
+        Uart1Proto_Send("ERR COREXY\r\n");
+      }
+      return;
+    }
+
+    Uart1Proto_Send("ERR ARG\r\n");
+    return;
+  }
 
   if (Uart1Proto_StrIeq(key, "PUMP") != 0)
   {

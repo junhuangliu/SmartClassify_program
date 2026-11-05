@@ -26,6 +26,7 @@
 #include "uart1_proto.h"
 #include "ws2812_spi.h"
 #include "pump.h"
+#include "corexy.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -61,6 +62,10 @@ UART_HandleTypeDef huart3;
 UART_HandleTypeDef huart6;
 DMA_HandleTypeDef hdma_usart1_rx;
 DMA_HandleTypeDef hdma_usart1_tx;
+DMA_HandleTypeDef hdma_usart2_rx;
+DMA_HandleTypeDef hdma_usart2_tx;
+DMA_HandleTypeDef hdma_usart3_rx;
+DMA_HandleTypeDef hdma_usart3_tx;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
@@ -96,6 +101,7 @@ void StartDefaultTask(void *argument);
 /* USER CODE BEGIN PFP */
 void Uart1RxTask(void *argument);
 void WS2812Task(void *argument);
+void CoreXYTask(void *argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -150,6 +156,7 @@ int main(void)
   Uart1Proto_Init();
   WS2812_Init();
   Pump_Init();
+  (void)CoreXY_Init();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -197,6 +204,13 @@ int main(void)
     .priority = (osPriority_t) osPriorityNormal,
   };
   osThreadNew(WS2812Task, NULL, &ws2812Task_attributes);
+
+  const osThreadAttr_t corexyTask_attributes = {
+    .name = "CoreXYTask",
+    .stack_size = 512 * 4,
+    .priority = (osPriority_t) osPriorityNormal,
+  };
+  osThreadNew(CoreXYTask, NULL, &corexyTask_attributes);
 
   /* USER CODE END RTOS_THREADS */
 
@@ -737,9 +751,22 @@ static void MX_DMA_Init(void)
 {
 
   /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
   __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA1_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+  /* DMA1_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream3_IRQn);
+  /* DMA1_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+  /* DMA1_Stream6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
   /* DMA2_Stream2_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);

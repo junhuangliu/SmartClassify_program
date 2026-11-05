@@ -26,6 +26,7 @@
 /* USER CODE BEGIN Includes */
 #include "cmsis_os2.h"
 #include "uart1_comm.h"
+#include "uart1_proto.h"
 #include "ws2812_spi.h"
 #include <string.h>
 /* USER CODE END Includes */
@@ -99,14 +100,15 @@ void PA10BlinkTask(void *argument);
 /* USER CODE BEGIN Application */
 
 /**
- * @brief USART1 接收验证任务实现
+ * @brief USART1 上位机命令处理任务
  * 
  * @details
- * - 设计意图：验证 DMA+空闲中断底层通路是否正常工作
- * - 实现要点：循环从 uart1_rx_queue 取消息，使用 Uart1Comm_Send 将原始数据回显
+ * - 设计意图：把串口收到的数据交给 uart1_proto 解析，实现上位机控制水泵
+ * - 实现要点：循环从 uart1_rx_queue 取数据块，调用 Uart1Proto_Feed 做按行解析
  * - 注意事项：
- *   1. 回显仅用于联调，等协议确定后需改为协议解析流程
- *   2. 队列元素中的 pData 指向 DMA 缓冲区，回显时直接用该指针即可
+ *   1. 解析/动作在任务上下文执行，ISR 只负责入队，符合项目约束
+ *   2. Uart1Proto_Feed 内部可能调用 Pump_Off（含 osDelay），会短暂阻塞本任务
+ *   3. 队列元素是数据拷贝，不依赖 DMA 缓冲区生命周期
  * 
  * @param argument 未使用
  * @retval 无
@@ -118,32 +120,22 @@ void Uart1RxTask(void *argument)
   Uart1RxMsg_t msg;
 
   /* 上电后主动发送一条启动提示，便于确认串口发送通路正常 */
-  static const char boot_msg[] = "SmartClassify UART1 ready\r\n";
-  static const char tick_msg[] = "UART1 tick\r\n";
-  Uart1Comm_Send((const uint8_t *)boot_msg, sizeof(boot_msg) - 1);
+  Uart1Proto_Send("SmartClassify UART1 ready\r\n");
+
+  if (rxQueue == NULL)
+  {
+    Uart1Proto_Send("ERR UART1 QUEUE\r\n");
+    for (;;)
+    {
+      osDelay(1000);
+    }
+  }
 
   for (;;)
   {
-    if (rxQueue != NULL)
+    if (osMessageQueueGet(rxQueue, &msg, NULL, osWaitForever) == osOK)
     {
-      if (osMessageQueueGet(rxQueue, &msg, NULL, 1000) == osOK)
-      {
-        if (msg.len > 0U)
-        {
-          /* 底层联调：收到什么就发回去，用于验证收发通路 */
-          Uart1Comm_Send(msg.data, msg.len);
-        }
-      }
-      else
-      {
-        /* 空闲 1s 发一次心跳，便于观察串口是否在线 */
-        Uart1Comm_Send((const uint8_t *)tick_msg, sizeof(tick_msg) - 1);
-      }
-    }
-    else
-    {
-      osDelay(1000);
-      Uart1Comm_Send((const uint8_t *)tick_msg, sizeof(tick_msg) - 1);
+      Uart1Proto_Feed(msg.data, msg.len);
     }
   }
 }

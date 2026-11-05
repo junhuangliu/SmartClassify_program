@@ -57,6 +57,8 @@ Core/Src/sysmem.c \
 Core/Src/syscalls.c \
 Core/Src/freertos.c \
 Core/Src/uart1_comm.c \
+Core/Src/uart1_proto.c \
+Core/Src/pump.c \
 Core/Src/Emm_V5.c \
 Core/Src/stepper_motor.c \
 Core/Src/corexy.c \

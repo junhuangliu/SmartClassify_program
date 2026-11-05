@@ -23,7 +23,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "uart1_comm.h"
+#include "uart1_proto.h"
 #include "ws2812_spi.h"
+#include "pump.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -145,17 +147,9 @@ int main(void)
   MX_USB_OTG_FS_PCD_Init();
   /* USER CODE BEGIN 2 */
   Uart1Comm_Init();
+  Uart1Proto_Init();
   WS2812_Init();
-  /* PD12 (TIM4_CH1) 输出方波用于调试系统时钟，方便测量实际频率 */
-  __HAL_TIM_DISABLE(&htim4);
-  htim4.Instance->PSC  = 0;
-  htim4.Instance->ARR  = 59999;
-  TIM_OC_InitTypeDef sConfigOC = {0};
-  sConfigOC.OCMode     = TIM_OCMODE_TOGGLE;
-  sConfigOC.Pulse      = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  HAL_TIM_OC_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1);
-  __HAL_TIM_ENABLE(&htim4);
+  Pump_Init();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -528,7 +522,9 @@ static void MX_TIM4_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM4_Init 2 */
-
+  /* CubeMX 将 TIM4 配成了外部时钟模式(ClockSourceITR/ITR0)，PWM 需要内部时钟，
+     这里在生成配置之后清除从模式，否则计数器不计数、PD12/PD13 无 PWM 输出 */
+  htim4.Instance->SMCR = 0U;
   /* USER CODE END TIM4_Init 2 */
   HAL_TIM_MspPostInit(&htim4);
 

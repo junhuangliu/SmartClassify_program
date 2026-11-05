@@ -26,8 +26,8 @@
 /* USER CODE BEGIN Includes */
 #include "cmsis_os2.h"
 #include "uart1_comm.h"
+#include "uart1_proto.h"
 #include "ws2812_spi.h"
-#include "WaterPump.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -93,7 +93,6 @@ void WS2812Task(void *argument);
  * @retval 无
  */
 void PA10BlinkTask(void *argument);
-void WaterPumpTask(void *argument);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -101,14 +100,15 @@ void WaterPumpTask(void *argument);
 /* USER CODE BEGIN Application */
 
 /**
- * @brief USART1 接收验证任务实现
+ * @brief USART1 上位机命令处理任务
  * 
  * @details
- * - 设计意图：验证 DMA+空闲中断底层通路是否正常工作
- * - 实现要点：循环从 uart1_rx_queue 取消息，使用 Uart1Comm_Send 将原始数据回显
+ * - 设计意图：把串口收到的数据交给 uart1_proto，分别处理水泵开关和 CoreXY 命令
+ * - 实现要点：循环从 uart1_rx_queue 取数据块，调用 Uart1Proto_Feed 做按行解析
  * - 注意事项：
- *   1. 回显仅用于联调，等协议确定后需改为协议解析流程
- *   2. 队列元素中的 pData 指向 DMA 缓冲区，回显时直接用该指针即可
+ *   1. 解析/动作在任务上下文执行，ISR 只负责入队，符合项目约束
+ *   2. switch 命令只调用原有水泵启停函数；init 命令只控制 CoreXY
+ *   3. 队列元素是数据拷贝，不依赖 DMA 缓冲区生命周期
  * 
  * @param argument 未使用
  * @retval 无
@@ -119,22 +119,23 @@ void Uart1RxTask(void *argument)
   osMessageQueueId_t rxQueue = Uart1Comm_GetRxQueueHandle();
   Uart1RxMsg_t msg;
 
+  /* 上电后主动发送一条启动提示，便于确认串口发送通路正常 */
+  Uart1Proto_Send("SmartClassify UART1 ready\r\n");
+
+  if (rxQueue == NULL)
+  {
+    Uart1Proto_Send("ERR UART1 QUEUE\r\n");
+    for (;;)
+    {
+      osDelay(1000);
+    }
+  }
+
   for (;;)
   {
-    if (rxQueue != NULL)
+    if (osMessageQueueGet(rxQueue, &msg, NULL, osWaitForever) == osOK)
     {
-      if (osMessageQueueGet(rxQueue, &msg, NULL, osWaitForever) == osOK)
-      {
-        if ((msg.pData != NULL) && (msg.len > 0))
-        {
-          /* 底层联调：收到什么就发回去，用于验证收发通路 */
-          Uart1Comm_Send(msg.pData, msg.len);
-        }
-      }
-    }
-    else
-    {
-      osDelay(10);
+      Uart1Proto_Feed(msg.data, msg.len);
     }
   }
 }
@@ -147,7 +148,8 @@ void Uart1RxTask(void *argument)
  * - 实现要点：7色彩虹调色板（GRB顺序），每帧四个位置分配相邻三种色相；
  *   phase 逐帧+1使彩虹颜色流动变化
  * - 数据流：仅操作 RGB 缓冲区，由 WS2812_Show() 统一编码并通过 SPI1 发送
- * - 注意事项：亮度始终全开，osDelay(100) = 100ms/帧
+ * - 注意事项：亮度始终全开，osDelay(150) = 150ms/帧（时钟修正为真实 120MHz 后，
+ *   按原 38.4MHz 误配下的观感等比放慢约 3 倍）
  * 
  * @param argument 未使用
  * @retval 无
@@ -175,7 +177,7 @@ void WS2812Task(void *argument)
   {
     if (running_rainbow)
     {
-      /* ===== 彩虹流动模式，持续 7s ===== */
+      /* ===== 彩虹流动模式，持续约 21s ===== */
       uint16_t frame_count = 0;
       for (; frame_count < 140; frame_count++)
       {
@@ -189,13 +191,13 @@ void WS2812Task(void *argument)
         }
         WS2812_Show();
         phase = (phase + 1) % 7;
-        osDelay(50);
+        osDelay(150);
       }
       running_rainbow = 0;
     }
     else
     {
-      /* ===== 闪烁灯模式，持续 4s ===== */
+      /* ===== 闪烁灯模式，各模式按原观感放慢约 3 倍 ===== */
       switch (mode % 4)
       {
         case 0:
@@ -204,10 +206,10 @@ void WS2812Task(void *argument)
           {
             WS2812_SetAll(255, 255, 255);
             WS2812_Show();
-            osDelay(20);
+            osDelay(60);
             WS2812_SetAll(0, 0, 0);
             WS2812_Show();
-            osDelay(20);
+            osDelay(60);
           }
           break;
           
@@ -219,7 +221,7 @@ void WS2812Task(void *argument)
             {
               WS2812_SetAll(colors[c][0], colors[c][1], colors[c][2]);
               WS2812_Show();
-              osDelay(500);
+              osDelay(1500);
             }
           }
           break;
@@ -243,7 +245,7 @@ void WS2812Task(void *argument)
               WS2812_SetPixel(3, 255, 0, 0);
             }
             WS2812_Show();
-            osDelay(300);
+            osDelay(900);
           }
           break;
           
@@ -262,7 +264,7 @@ void WS2812Task(void *argument)
               WS2812_SetPixel(2, 255, 0, 255);
             }
             WS2812_Show();
-            osDelay(400);
+            osDelay(1200);
           }
           break;
       }
@@ -293,26 +295,4 @@ void PA10BlinkTask(void *argument)
   }
 }
 
-/**
- * @brief 周期性启停水泵，用于验证水泵模块与调度器协作。
- *
- * @details 任务循环调用水泵启停接口，并在每个状态保持 3 秒；接口内部使用 osDelay，
- * 因此必须在任务上下文运行。任务由 main.c 创建，参数未使用且不会返回。
- *
- * @param argument 未使用
- * @retval 无
- */
-void WaterPumpTask(void *argument)
-{
-  (void)argument;
-
-  for (;;)
-  {
-    WaterPump_Start();
-    osDelay(3000);
-    WaterPump_Stop();
-    osDelay(3000);
-  }
-}
 /* USER CODE END Application */
-

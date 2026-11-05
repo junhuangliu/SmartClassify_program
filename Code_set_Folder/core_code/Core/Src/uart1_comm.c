@@ -76,7 +76,7 @@ void Uart1Comm_Init(void)
     uart1_rx_queue = osMessageQueueNew(16, sizeof(Uart1RxMsg_t), NULL);
   }
 
-  /* 启动 DMA 循环接收 + UART 空闲中断 */
+  /* 启动 DMA 接收 + UART 空闲中断（普通模式，事件回调中会重新开启） */
   HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, UART1_RX_DMA_BUF_SIZE);
 
   /* 关闭半传输中断（大多数串口场景不需要 HT 中断） */
@@ -163,16 +163,20 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 
   if (huart->Instance == USART1)
   {
-    if ((uart1_rx_queue != NULL) && (Size > 0))
+    if ((uart1_rx_queue != NULL) && (Size > 0U))
     {
       Uart1RxMsg_t msg;
-      msg.pData = rx_dma_buf;
-      msg.len   = Size;
+      msg.len = (Size > UART1_RX_MSG_MAX) ? UART1_RX_MSG_MAX : Size;
+      memcpy(msg.data, rx_dma_buf, msg.len);
 
       BaseType_t xHigherPriorityTaskWoken = pdFALSE;
       xQueueSendFromISR(uart1_rx_queue, &msg, &xHigherPriorityTaskWoken);
       portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
+
+    /* DMA 使用普通模式：每次空闲/接收完成后需重新开启，Size 才是本次的实际长度 */
+    HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, UART1_RX_DMA_BUF_SIZE);
+    __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
   }
 
   /* USER CODE BEGIN HAL_UARTEx_RxEventCallback 1 */

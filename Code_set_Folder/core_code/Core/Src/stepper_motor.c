@@ -5,6 +5,7 @@
 #define STEPPER_MOTOR_FRAME_END 0x6BU
 #define STEPPER_MOTOR_CMD_READ_SPEED 0x35U
 #define STEPPER_MOTOR_CMD_READ_POSITION 0x36U
+#define STEPPER_MOTOR_CMD_READ_HOMING 0x3BU
 #define STEPPER_MOTOR_TX_TIMEOUT_MS 100U
 
 StepperMotor_t stepper_motor_a1;
@@ -76,6 +77,7 @@ HAL_StatusTypeDef StepperMotor_Init(StepperMotor_t *motor, UART_HandleTypeDef *h
   motor->huart = huart;
   motor->speed_rpm = 0;
   motor->position_pulses = 0;
+  motor->homing_status = 0U;
   motor->valid_data = 0U;
   motor->rx_length = 0U;
   motor->rx_dma_size = 0U;
@@ -232,6 +234,123 @@ HAL_StatusTypeDef StepperMotor_Stop(StepperMotor_t *motor)
 }
 
 /**
+ * @brief 清除本电机缓存的回零状态。
+ * @details
+ * - 设计意图：0x3B 查询是异步应答，清除有效标志后才能判断本次查询是否真的收到新数据。
+ * - 实现要点：同时清零状态字节和 valid_data 中的回零有效位，不影响速度/位置的有效位。
+ * - 注意事项：可在任务或中断上下文调用；字段为 volatile，避免编译器合并读写。
+ * @param motor 电机对象。
+ */
+void StepperMotor_ClearHomingStatus(StepperMotor_t *motor)
+{
+  motor->homing_status = 0U;
+  motor->valid_data &= ~STEPPER_MOTOR_HOMING_VALID;
+}
+
+/**
+ * @brief 请求读取本电机回零状态。
+ * @details
+ * - 设计意图：碰撞回零期间需要反复查询 0x3B，确认电机是否仍在回零、是否失败。
+ * - 实现要点：先等待共享发送缓冲区空闲，再发 S_OFLAG 查询，最后等待 DMA 发完；
+ *   应答由 StepperMotor_ParseDmaData 在 UART 空闲中断里写入 homing_status。
+ * - 注意事项：本函数只保证命令发完，不保证应答已到；调用方应留出总线空闲时间再检查有效位。
+ * @param motor 电机对象。
+ * @retval HAL 状态码。
+ */
+HAL_StatusTypeDef StepperMotor_ReadHomingStatus(StepperMotor_t *motor)
+{
+  HAL_StatusTypeDef status = StepperMotor_WaitTx(motor);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  status = Emm_V5_Read_Sys_Params(motor->huart, S_OFLAG);
+  return (status == HAL_OK) ? StepperMotor_WaitTx(motor) : status;
+}
+
+/**
+ * @brief 配置 EMM_V5 回零参数。
+ * @details
+ * - 设计意图：把模式、方向、速度、超时和碰撞检测阈值一次性写入驱动器，供后续回零触发使用。
+ * - 实现要点：EMM_V5 命令缓冲区是静态共享的，因此发送前后都等待本 UART 的 DMA 发送完成；
+ *   A/B 两路必须串行调用，不能同时进入本函数。
+ * - 数据流：参数经 Emm_V5_Origin_Modify_Params 打包，通过本电机 UART 的 DMA 发出。
+ * @param motor 电机对象。
+ * @param mode 回零模式，2 为无限位碰撞回零。
+ * @param direction 回零方向，0 为正向，1 为反向。
+ * @param vel 回零速度，单位 RPM。
+ * @param timeout_ms 回零超时，单位 ms。
+ * @param sl_vel 碰撞检测速度阈值，单位 RPM。
+ * @param sl_ma 碰撞检测电流阈值，单位 mA。
+ * @param sl_ms 碰撞检测持续时间，单位 ms。
+ * @param store 是否将参数保存到电机内部。
+ * @retval HAL 状态码。
+ */
+HAL_StatusTypeDef StepperMotor_HomeSetParams(StepperMotor_t *motor, uint8_t mode,
+                                             uint8_t direction, uint16_t vel,
+                                             uint32_t timeout_ms, uint16_t sl_vel,
+                                             uint16_t sl_ma, uint16_t sl_ms,
+                                             bool store)
+{
+  HAL_StatusTypeDef status = StepperMotor_WaitTx(motor);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  Emm_V5_Origin_Modify_Params(motor->huart, store, mode, direction, vel,
+                              timeout_ms, sl_vel, sl_ma, sl_ms, false);
+  return StepperMotor_WaitTx(motor);
+}
+
+/**
+ * @brief 触发本电机回零。
+ * @details
+ * - 设计意图：在参数配置完成后启动回零；sync=true 时先缓存命令，等同步触发后两轴一起动。
+ * - 实现要点：等待 DMA 空闲后发送回零触发命令，再等待发送完成，防止共享缓冲区被下一路覆盖。
+ * - 注意事项：sync=true 时还需由调用方发送 Emm_V5_Synchronous_motion 才会真正开始运动。
+ * @param motor 电机对象。
+ * @param mode 回零模式，2 为无限位碰撞回零。
+ * @param sync 是否等待 EMM_V5 同步触发。
+ * @retval HAL 状态码。
+ */
+HAL_StatusTypeDef StepperMotor_HomeTrigger(StepperMotor_t *motor, uint8_t mode,
+                                           bool sync)
+{
+  HAL_StatusTypeDef status = StepperMotor_WaitTx(motor);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  Emm_V5_Origin_Trigger_Return(motor->huart, mode, sync);
+  return StepperMotor_WaitTx(motor);
+}
+
+/**
+ * @brief 中止本电机回零并立即停机。
+ * @details
+ * - 设计意图：回零失败、超时或用户发 init:0 时，必须尽快撤销回零并停止电机，避免持续顶住硬限位。
+ * - 实现要点：先发回零中断命令，再发立即停止命令，两条命令之间都等待 DMA 发送完成。
+ * - 注意事项：本函数会占用该 UART 的发送通道，只应由正在执行回零的任务调用，避免与状态轮询并发。
+ * @param motor 电机对象。
+ * @retval HAL 状态码。
+ */
+HAL_StatusTypeDef StepperMotor_HomeAbort(StepperMotor_t *motor)
+{
+  HAL_StatusTypeDef status = StepperMotor_WaitTx(motor);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  Emm_V5_Origin_Interrupt(motor->huart);
+  status = StepperMotor_WaitTx(motor);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  return StepperMotor_Stop(motor);
+}
+
+/**
  * @brief 设置电机速度。
  * @details 等待共享 EMM_V5 命令缓冲区可用后发送速度命令，并等待 DMA 发送完成。
  * @param motor 电机对象。
@@ -313,7 +432,8 @@ bool StepperMotor_ParseDmaData(StepperMotor_t *motor, const uint8_t *data,
 
     if ((motor->rx_length == 1U) &&
         (byte != STEPPER_MOTOR_CMD_READ_SPEED) &&
-        (byte != STEPPER_MOTOR_CMD_READ_POSITION))
+        (byte != STEPPER_MOTOR_CMD_READ_POSITION) &&
+        (byte != STEPPER_MOTOR_CMD_READ_HOMING))
     {
       motor->rx_length = (byte == STEPPER_MOTOR_ADDRESS) ? 1U : 0U;
       if (motor->rx_length != 0U)
@@ -329,37 +449,71 @@ bool StepperMotor_ParseDmaData(StepperMotor_t *motor, const uint8_t *data,
       continue;
     }
 
-    uint8_t frame_length = (motor->rx_frame[1] == STEPPER_MOTOR_CMD_READ_SPEED) ?
-                           6U : STEPPER_MOTOR_RX_FRAME_SIZE;
+    uint8_t frame_length;
+
+    switch (motor->rx_frame[1])
+    {
+      case STEPPER_MOTOR_CMD_READ_SPEED:
+        frame_length = 6U;
+        break;
+      case STEPPER_MOTOR_CMD_READ_POSITION:
+        frame_length = STEPPER_MOTOR_RX_FRAME_SIZE;
+        break;
+      case STEPPER_MOTOR_CMD_READ_HOMING:
+        frame_length = STEPPER_MOTOR_HOMING_FRAME_SIZE;
+        break;
+      default:
+        frame_length = 0U;
+        break;
+    }
+
+    if (frame_length == 0U)
+    {
+      motor->rx_length = 0U;
+      continue;
+    }
+
     if (motor->rx_length == frame_length)
     {
       if (motor->rx_frame[frame_length - 1U] == STEPPER_MOTOR_FRAME_END)
       {
-        if (motor->rx_frame[1] == STEPPER_MOTOR_CMD_READ_SPEED)
+        switch (motor->rx_frame[1])
         {
-          uint16_t speed = ((uint16_t)motor->rx_frame[3] << 8) | motor->rx_frame[4];
-          if (speed <= INT16_MAX)
+          case STEPPER_MOTOR_CMD_READ_SPEED:
           {
-            motor->speed_rpm = (motor->rx_frame[2] == 0U) ?
-                               (int16_t)speed : -(int16_t)speed;
-            motor->valid_data |= STEPPER_MOTOR_SPEED_VALID;
-            parsed = true;
+            uint16_t speed = ((uint16_t)motor->rx_frame[3] << 8) | motor->rx_frame[4];
+            if (speed <= INT16_MAX)
+            {
+              motor->speed_rpm = (motor->rx_frame[2] == 0U) ?
+                                 (int16_t)speed : -(int16_t)speed;
+              motor->valid_data |= STEPPER_MOTOR_SPEED_VALID;
+              parsed = true;
+            }
+            break;
           }
-        }
-        else
-        {
-          uint32_t position = ((uint32_t)motor->rx_frame[3] << 24) |
-                              ((uint32_t)motor->rx_frame[4] << 16) |
-                              ((uint32_t)motor->rx_frame[5] << 8) |
-                              motor->rx_frame[6];
-          int64_t signed_position = (motor->rx_frame[2] == 0U) ?
-                                    (int64_t)position : -(int64_t)position;
-          if ((signed_position >= INT32_MIN) && (signed_position <= INT32_MAX))
+          case STEPPER_MOTOR_CMD_READ_POSITION:
           {
-            motor->position_pulses = (int32_t)signed_position;
-            motor->valid_data |= STEPPER_MOTOR_POSITION_VALID;
-            parsed = true;
+            uint32_t position = ((uint32_t)motor->rx_frame[3] << 24) |
+                                ((uint32_t)motor->rx_frame[4] << 16) |
+                                ((uint32_t)motor->rx_frame[5] << 8) |
+                                motor->rx_frame[6];
+            int64_t signed_position = (motor->rx_frame[2] == 0U) ?
+                                      (int64_t)position : -(int64_t)position;
+            if ((signed_position >= INT32_MIN) && (signed_position <= INT32_MAX))
+            {
+              motor->position_pulses = (int32_t)signed_position;
+              motor->valid_data |= STEPPER_MOTOR_POSITION_VALID;
+              parsed = true;
+            }
+            break;
           }
+          case STEPPER_MOTOR_CMD_READ_HOMING:
+            motor->homing_status = motor->rx_frame[2];
+            motor->valid_data |= STEPPER_MOTOR_HOMING_VALID;
+            parsed = true;
+            break;
+          default:
+            break;
         }
       }
       motor->rx_length = 0U;

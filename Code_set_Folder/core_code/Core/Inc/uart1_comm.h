@@ -7,7 +7,7 @@
   * @attention
   *
   * 本模块用于实现板子与上位机通过 USART1 的底层收发：
-  * - 接收：采用 DMA 循环 + UART 空闲中断（HAL_UARTEx_ReceiveToIdle_DMA）
+  * - 接收：采用 DMA 普通模式 + UART 空闲中断，每次事件后重新开启接收
   * - 发送：采用 DMA（HAL_UART_Transmit_DMA）
   * - 解耦：通过 FreeRTOS 消息队列将 ISR 数据块传递给任务处理
   *
@@ -30,13 +30,15 @@ extern "C" {
 /* Exported types ------------------------------------------------------------*/
 /**
  * @brief USART1 接收消息结构体
- * @details 用于在 UART 空闲中断回调中，将“本次空闲前实际接收到的数据块”
- *          通过 FreeRTOS 消息队列传递给 Uart1RxTask。
+ * @details 用于在 UART 空闲中断回调中，将“本次空闲前实际接收到的数据块”拷贝后
+ *          通过 FreeRTOS 消息队列传递给 Uart1RxTask（不直接暴露 DMA 缓冲区）。
  */
+#define UART1_RX_MSG_MAX  256
+
 typedef struct
 {
-  uint8_t *pData;  /* 指向 DMA 接收缓冲区中的数据起始地址 */
-  uint16_t len;    /* 本次空闲中断触发时的有效数据长度 */
+  uint16_t len;                    /* 本次空闲中断触发时的有效数据长度 */
+  uint8_t  data[UART1_RX_MSG_MAX]; /* 拷贝后的数据，避免 ISR 重启接收时被覆盖 */
 } Uart1RxMsg_t;
 
 /* Exported functions prototypes ---------------------------------------------*/

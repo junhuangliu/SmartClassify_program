@@ -21,10 +21,12 @@
 #include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
- /* USER CODE BEGIN Includes */
+/* USER CODE BEGIN Includes */
 #include "uart1_comm.h"
+#include "uart1_proto.h"
 #include "ws2812_spi.h"
 #include "WaterPump.h"
+#include "corexy.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -58,8 +60,12 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 UART_HandleTypeDef huart6;
-DMA_HandleTypeDef hdma_usart1_tx;
 DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart1_tx;
+DMA_HandleTypeDef hdma_usart2_rx;
+DMA_HandleTypeDef hdma_usart2_tx;
+DMA_HandleTypeDef hdma_usart3_rx;
+DMA_HandleTypeDef hdma_usart3_tx;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
@@ -95,7 +101,7 @@ void StartDefaultTask(void *argument);
 /* USER CODE BEGIN PFP */
 void Uart1RxTask(void *argument);
 void WS2812Task(void *argument);
-void WaterPumpTask(void *argument);
+void CoreXYTask(void *argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -146,10 +152,12 @@ int main(void)
   MX_USART6_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
   /* USER CODE BEGIN 2 */
-  Uart1Comm_Init();
-  WS2812_Init();
-  /* 泵/阀 PWM 先置零输出，保证调度器启动前执行机构不动作；真正启停放到 WaterPumpTask */
-  WaterPump_Init();
+    Uart1Comm_Init();
+    Uart1Proto_Init();
+    WS2812_Init();
+    /* 独立初始化泵/阀 PWM；启停由水泵接口单独控制 */
+    WaterPump_Init();
+    (void)CoreXY_Init();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -198,13 +206,14 @@ int main(void)
   };
   osThreadNew(WS2812Task, NULL, &ws2812Task_attributes);
 
-  const osThreadAttr_t waterPumpTask_attributes = {
-    .name = "WaterPumpTask",
-    .stack_size = 128 * 4,
+  const osThreadAttr_t corexyTask_attributes = {
+    .name = "CoreXYTask",
+    .stack_size = 512 * 4,
     .priority = (osPriority_t) osPriorityNormal,
-  };
-  osThreadNew(WaterPumpTask, NULL, &waterPumpTask_attributes);
+    };
+    osThreadNew(CoreXYTask, NULL, &corexyTask_attributes);
   /* USER CODE END RTOS_THREADS */
+
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
@@ -246,8 +255,8 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 15;
-  RCC_OscInitStruct.PLL.PLLN = 144;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 240;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 5;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -740,9 +749,22 @@ static void MX_DMA_Init(void)
 {
 
   /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
   __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA1_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+  /* DMA1_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream3_IRQn);
+  /* DMA1_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+  /* DMA1_Stream6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
   /* DMA2_Stream2_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);

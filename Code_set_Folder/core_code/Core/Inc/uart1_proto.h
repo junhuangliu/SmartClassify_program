@@ -6,13 +6,11 @@
   ******************************************************************************
   * @attention
   *
- * 协议约定（文本，大小写不敏感，以 \r 或 \n 结尾）：
- * - init:1         启动 CoreXY 碰撞回零（异步，完成后回复 OK HOME DONE）
- * - init:0         中止回零并停止电机
- * - switch:1       调用原有 WaterPump_Start() 开启水泵/阀
- * - switch:0       调用原有 WaterPump_Stop() 关闭水泵/阀
- * - pump:<0~100>   不支持；原有水泵接口使用固定占空比
- * - STATUS         查询 CoreXY 状态
+  * 协议约定（文本，大小写不敏感，以 \r 或 \n 结尾）：
+  * - switch:1       调用原有 WaterPump_Start() 开启水泵/阀
+  * - switch:0       调用原有 WaterPump_Stop() 关闭水泵/阀
+  * - pump:<0~100>   不支持；原有水泵接口使用固定占空比
+  * - STATUS         查询 CoreXY 通信初始化状态
  * - PING           连通测试
   *
   * 全部自定义逻辑均放置于 USER CODE 区域，符合项目约束。

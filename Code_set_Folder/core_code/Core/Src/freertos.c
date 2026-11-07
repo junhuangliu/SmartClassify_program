@@ -93,6 +93,7 @@ void WS2812Task(void *argument);
  * @retval 无
  */
 void PA10BlinkTask(void *argument);
+void WaterPumpTask(void *argument);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -157,8 +158,11 @@ void Uart1RxTask(void *argument)
 void WS2812Task(void *argument)
 {
   (void)argument;
-
+WS2812_SetAll(255, 255, 255);
+WS2812_Show();
   /* 七色彩虹调色板（GRB 顺序） */
+  /****AIBEGIN */
+#if 0
   static const uint8_t rainbow[7][3] = {
       {0, 255, 0},       /* 红   G=0, R=255, B=0 */
       {127, 255, 0},     /* 橙   G=127, R=255, B=0 */
@@ -273,6 +277,12 @@ void WS2812Task(void *argument)
       running_rainbow = 1;
     }
   }
+#endif
+  /****AIEND */
+  for (;;)
+  {
+    osDelay(1000U);
+  }
 }
 
 /**
@@ -292,6 +302,22 @@ void PA10BlinkTask(void *argument)
   {
     HAL_GPIO_TogglePin(GPIOF, GPIO_PIN_10);
     osDelay(200);
+  }
+}
+
+/**
+ * @brief 水泵任务入口，供后续添加水泵控制逻辑。
+ *
+ * @details 保留独立的 FreeRTOS 任务循环，不与 CoreXY 电机任务联动。
+ *
+ * @param argument 未使用。
+ */
+void WaterPumpTask(void *argument)
+{
+  (void)argument;
+  for (;;)
+  {
+
   }
 }
 

@@ -1,11 +1,14 @@
 #include "corexy.h"
+#include "ws2812_spi.h"
 #include "cmsis_os2.h"
 #include "uart1_proto.h"
 #include <limits.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdint.h>
 
-#define COREXY_TX_TIMEOUT_MS 100U
+#define COREXY_TX_TIMEOUT_US 100000U
+
 
 extern UART_HandleTypeDef huart2;
 extern UART_HandleTypeDef huart3;
@@ -13,25 +16,73 @@ extern UART_HandleTypeDef huart3;
 static float corexy_target_x;
 static float corexy_target_y;
 static volatile CoreXY_State_t corexy_state = COREXY_STATE_IDLE;
-static volatile uint8_t corexy_abort_requested;
-static osMessageQueueId_t corexy_cmd_queue;
+static const char *corexy_origin_error_message;
+
+/**
+ * @brief 配置并启动 CoreXY 独占的 TIM5 微秒计时器。
+ * @details
+ * - 设计意图：为运动超时提供独立于 HAL/FreeRTOS SysTick 的硬件计时基准。
+ * - 实现要点：读取 APB1 定时器时钟，配置 TIM5 每 1 us 计数一次并以 32 位自由运行。
+ * - 注意事项：TIM5 专供 CoreXY 计时，不使用中断；当前 APB1 定时器时钟需为 1 MHz 的整数倍。
+ * @retval HAL_OK 配置成功；HAL_ERROR 时钟频率不支持整数微秒分频。
+ */
+static HAL_StatusTypeDef CoreXY_TimebaseInit(void)
+{
+  RCC_ClkInitTypeDef clock_config = {0};
+  uint32_t flash_latency = 0U;
+  uint32_t timer_clock_hz;
+
+  HAL_RCC_GetClockConfig(&clock_config, &flash_latency);
+  timer_clock_hz = HAL_RCC_GetPCLK1Freq();
+  if (clock_config.APB1CLKDivider != RCC_HCLK_DIV1)
+  {
+    timer_clock_hz *= 2U;
+  }
+
+  if ((timer_clock_hz < 1000000U) || ((timer_clock_hz % 1000000U) != 0U))
+  {
+    return HAL_ERROR;
+  }
+
+  __HAL_RCC_TIM5_CLK_ENABLE();
+  TIM5->CR1 = 0U;
+  TIM5->DIER = 0U;
+  TIM5->PSC = (timer_clock_hz / 1000000U) - 1U;
+  TIM5->ARR = UINT32_MAX;
+  TIM5->EGR = TIM_EGR_UG;
+  TIM5->CNT = 0U;
+  TIM5->SR = 0U;
+  TIM5->CR1 = TIM_CR1_CEN;
+
+  return HAL_OK;
+}
+
+/**
+ * @brief 读取 TIM5 当前的微秒计数。
+ * @details TIM5 以 1 MHz 自由运行；对计数值做无符号差可安全处理单次溢出。
+ * @retval 当前计数值，单位 us。
+ */
+static uint32_t CoreXY_TimeNowUs(void)
+{
+  return TIM5->CNT;
+}
 
 /**
  * @brief 等待指定电机的 DMA 发送完成。
  * @details
  * - 设计意图：EMM_V5 库使用静态共享发送缓冲区，上一条命令未发完就发下一条会被覆盖。
- * - 实现要点：轮询 UART 的 gState，超时时间与原有 CoreXY 逻辑保持一致；等待期间让出 CPU。
+ * - 实现要点：轮询 UART 的 gState，使用 TIM5 计量发送超时；等待期间让出 CPU。
  * - 注意事项：本函数可在任务上下文调用，不能在中断中调用。
  * @param motor 电机对象。
  * @retval HAL_OK 发送完成；HAL_TIMEOUT 等待超时。
  */
 static HAL_StatusTypeDef CoreXY_WaitTx(StepperMotor_t *motor)
 {
-  uint32_t start = HAL_GetTick();
+  uint32_t start_us = CoreXY_TimeNowUs();
 
   while (motor->huart->gState == HAL_UART_STATE_BUSY_TX)
   {
-    if ((HAL_GetTick() - start) >= COREXY_TX_TIMEOUT_MS)
+    if ((CoreXY_TimeNowUs() - start_us) >= COREXY_TX_TIMEOUT_US)
     {
       return HAL_TIMEOUT;
     }
@@ -44,7 +95,7 @@ static HAL_StatusTypeDef CoreXY_WaitTx(StepperMotor_t *motor)
 /**
  * @brief 立即停止 A/B 两电机。
  * @details
- * - 设计意图：运动命令失败、回零失败或用户中止时，必须让两个电机同时停下来，避免机构继续挤压。
+ * - 设计意图：运动命令失败时停止两台电机，避免只动一侧导致机构歪斜。
  * - 实现要点：逐路发送 EMM_V5 立即停止命令；StepperMotor_Stop 内部已等待 DMA 发送完成。
  * - 注意事项：会占用两路 UART 发送通道，只应由单一控制任务调用。
  */
@@ -55,19 +106,6 @@ static void CoreXY_StopAll(void)
 }
 
 /**
- * @brief 撤销 A/B 两路回零并立即停止。
- * @details
- * - 设计意图：碰撞回零失败或超时后，先中断回零过程，再发送停止命令，防止持续顶住硬限位。
- * - 实现要点：A/B 依次执行 HomeAbort；每路内部都会等待共享 DMA 缓冲区空闲。
- * - 注意事项：仅由正在执行回零的 CoreXYTask 调用，避免与状态轮询并发操作同一 UART。
- */
-static void CoreXY_AbortHoming(void)
-{
-  (void)StepperMotor_HomeAbort(&stepper_motor_a1);
-  (void)StepperMotor_HomeAbort(&stepper_motor_b1);
-}
-
-/**
  * @brief 对两电机下发一组同步位置命令。
  * @details
  * - 设计意图：CoreXY 逆解为 A=dx+dy、B=dx-dy；两路必须先缓存位置命令，再一起发同步触发，
@@ -75,7 +113,7 @@ static void CoreXY_AbortHoming(void)
  * - 实现要点：按两路中较大的位移分配速度，保证两路同时到达；脉冲数四舍五入到整数。
  *   任一路发送失败立即停止两电机，避免只动一侧。
  * - 数据流：dx/dy（mm）-> 皮带位移 -> 脉冲数/方向/速度 -> EMM_V5 位置命令 -> 同步触发。
- * - 注意事项：函数会等待 DMA 发送完成，必须在 FreeRTOS 任务中调用；回零期间拒绝运动。
+ * - 注意事项：函数会等待 DMA 发送完成，必须在 FreeRTOS 任务中调用。
  * @param dx X 方向位移，单位 mm。
  * @param dy Y 方向位移，单位 mm。
  * @param speed 电机最高速度，单位 RPM。
@@ -96,7 +134,6 @@ static HAL_StatusTypeDef CoreXY_Move(float dx, float dy, uint16_t speed,
   uint8_t direction[2];
   uint16_t motor_speed[2];
   float max_move;
-  uint32_t start;
   HAL_StatusTypeDef status;
   uint8_t i;
 
@@ -106,10 +143,6 @@ static HAL_StatusTypeDef CoreXY_Move(float dx, float dy, uint16_t speed,
     return HAL_ERROR;
   }
 
-  if (corexy_state == COREXY_STATE_HOMING)
-  {
-    return HAL_BUSY;
-  }
   if (corexy_state == COREXY_STATE_INIT_FAIL)
   {
     return HAL_ERROR;
@@ -147,6 +180,7 @@ static HAL_StatusTypeDef CoreXY_Move(float dx, float dy, uint16_t speed,
                                         acceleration, pulses[i], true, true);
       if (status != HAL_OK)
       {
+        /* 位置命令发送失败：停掉可能已启动的另一台电机。 */
         CoreXY_StopAll();
         return status;
       }
@@ -160,25 +194,23 @@ static HAL_StatusTypeDef CoreXY_Move(float dx, float dy, uint16_t speed,
       status = Emm_V5_Synchronous_motion(motors[i]->huart);
       if (status != HAL_OK)
       {
+        /* 同步触发命令失败：防止两台电机只启动一台。 */
         CoreXY_StopAll();
         return status;
       }
     }
   }
 
-  start = HAL_GetTick();
   for (i = 0U; i < 2U; ++i)
   {
     if (pulses[i] != 0U)
     {
-      while (motors[i]->huart->gState == HAL_UART_STATE_BUSY_TX)
+      status = CoreXY_WaitTx(motors[i]);
+      if (status != HAL_OK)
       {
-        if ((HAL_GetTick() - start) >= COREXY_TX_TIMEOUT_MS)
-        {
-          CoreXY_StopAll();
-          return HAL_TIMEOUT;
-        }
-        osDelay(1U);
+        /* 等待发送完成失败：停止两台电机，避免运动状态不确定。 */
+        CoreXY_StopAll();
+        return status;
       }
     }
   }
@@ -189,176 +221,21 @@ static HAL_StatusTypeDef CoreXY_Move(float dx, float dy, uint16_t speed,
 }
 
 /**
- * @brief 执行单段碰撞回零。
+ * @brief 初始化两电机 CoreXY 通信。
  * @details
- * - 设计意图：把一段回零（X 或 Y）的参数配置、同步触发和 0x3B 状态轮询封装在一起，
- *   两段共用同一套超时与失败处理。
- * - 实现要点：先配置 A/B 回零参数，再缓存触发命令并同步触发；随后周期查询 0x3B，
- *   必须看到“正在回零”后才接受“回零结束”，避免命令尚未生效被误判为完成。
- * - 注意事项：状态轮询要占用 UART，本函数只由 CoreXYTask 调用；中止标志在轮询点检查。
- * @param dir_a A 电机回零方向。
- * @param dir_b B 电机回零方向。
- * @retval HAL_OK 两电机均完成；HAL_TIMEOUT 超时；HAL_ERROR 失败或中止。
- */
-static HAL_StatusTypeDef CoreXY_HomePhase(uint8_t dir_a, uint8_t dir_b)
-{
-  HAL_StatusTypeDef status;
-  uint32_t start;
-  uint8_t seen_a = 0U;
-  uint8_t seen_b = 0U;
-  uint8_t done_a = 0U;
-  uint8_t done_b = 0U;
-
-  status = StepperMotor_HomeSetParams(&stepper_motor_a1, COREXY_HOME_MODE, dir_a,
-                                      COREXY_HOME_O_VEL, COREXY_HOME_O_TM,
-                                      COREXY_HOME_SL_VEL, COREXY_HOME_SL_MA,
-                                      COREXY_HOME_SL_MS, false);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-
-  status = StepperMotor_HomeSetParams(&stepper_motor_b1, COREXY_HOME_MODE, dir_b,
-                                      COREXY_HOME_O_VEL, COREXY_HOME_O_TM,
-                                      COREXY_HOME_SL_VEL, COREXY_HOME_SL_MA,
-                                      COREXY_HOME_SL_MS, false);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-
-  StepperMotor_ClearHomingStatus(&stepper_motor_a1);
-  StepperMotor_ClearHomingStatus(&stepper_motor_b1);
-
-  status = StepperMotor_HomeTrigger(&stepper_motor_a1, COREXY_HOME_MODE, true);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-
-  status = StepperMotor_HomeTrigger(&stepper_motor_b1, COREXY_HOME_MODE, true);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-
-  status = Emm_V5_Synchronous_motion(stepper_motor_a1.huart);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-
-  status = Emm_V5_Synchronous_motion(stepper_motor_b1.huart);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-
-  status = CoreXY_WaitTx(&stepper_motor_a1);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-  status = CoreXY_WaitTx(&stepper_motor_b1);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-
-  osDelay(COREXY_HOME_START_DELAY_MS);
-  start = HAL_GetTick();
-
-  for (;;)
-  {
-    if (corexy_abort_requested)
-    {
-      return HAL_ERROR;
-    }
-
-    if ((HAL_GetTick() - start) >= COREXY_HOME_TIMEOUT_MS)
-    {
-      return HAL_TIMEOUT;
-    }
-
-    if (!done_a)
-    {
-      StepperMotor_ClearHomingStatus(&stepper_motor_a1);
-      status = StepperMotor_ReadHomingStatus(&stepper_motor_a1);
-      if (status != HAL_OK)
-      {
-        return status;
-      }
-    }
-
-    if (!done_b)
-    {
-      StepperMotor_ClearHomingStatus(&stepper_motor_b1);
-      status = StepperMotor_ReadHomingStatus(&stepper_motor_b1);
-      if (status != HAL_OK)
-      {
-        return status;
-      }
-    }
-
-    osDelay(COREXY_HOME_POLL_MS);
-
-    if (!done_a && ((stepper_motor_a1.valid_data & STEPPER_MOTOR_HOMING_VALID) != 0U))
-    {
-      if ((stepper_motor_a1.homing_status & STEPPER_MOTOR_OFLAG_FAILED) != 0U)
-      {
-        return HAL_ERROR;
-      }
-      if ((stepper_motor_a1.homing_status & STEPPER_MOTOR_OFLAG_RUNNING) != 0U)
-      {
-        seen_a = 1U;
-      }
-      else if (seen_a != 0U)
-      {
-        done_a = 1U;
-      }
-    }
-
-    if (!done_b && ((stepper_motor_b1.valid_data & STEPPER_MOTOR_HOMING_VALID) != 0U))
-    {
-      if ((stepper_motor_b1.homing_status & STEPPER_MOTOR_OFLAG_FAILED) != 0U)
-      {
-        return HAL_ERROR;
-      }
-      if ((stepper_motor_b1.homing_status & STEPPER_MOTOR_OFLAG_RUNNING) != 0U)
-      {
-        seen_b = 1U;
-      }
-      else if (seen_b != 0U)
-      {
-        done_b = 1U;
-      }
-    }
-
-    if ((seen_a == 0U) && (seen_b == 0U) &&
-        ((HAL_GetTick() - start) >= COREXY_HOME_START_TIMEOUT_MS))
-    {
-      return HAL_ERROR;
-    }
-
-    if ((done_a != 0U) && (done_b != 0U))
-    {
-      return HAL_OK;
-    }
-  }
-}
-
-/**
- * @brief 初始化两电机 CoreXY 并创建回零命令队列。
- * @details
- * - 设计意图：把 A/B 两路绑定到 USART2/USART3，并提前创建队列，供 UART1 命令任务投递回零请求。
+ * - 设计意图：把 A/B 两路绑定到对应 UART，供后续普通位置/速度控制使用。
  * - 实现要点：两路都调用 StepperMotor_Init 打开空闲中断 + DMA 接收；任一路失败都记录为初始化失败。
- * - 注意事项：在 osKernelStart 之前调用也能创建 FreeRTOS 队列；重复调用不会重复创建队列。
+ * - 注意事项：在 osKernelStart 之前调用；调用前应完成 UART 和 DMA 外设初始化。
  * @retval HAL 状态码。
  */
 HAL_StatusTypeDef CoreXY_Init(void)
 {
   HAL_StatusTypeDef status = HAL_OK;
 
+  if (CoreXY_TimebaseInit() != HAL_OK)
+  {
+    status = HAL_ERROR;
+  }
   if (StepperMotor_Init(&stepper_motor_a1, COREXY_MOTOR_A_UART_HANDLE) != HAL_OK)
   {
     status = HAL_ERROR;
@@ -368,18 +245,8 @@ HAL_StatusTypeDef CoreXY_Init(void)
     status = HAL_ERROR;
   }
 
-  if (corexy_cmd_queue == NULL)
-  {
-    corexy_cmd_queue = osMessageQueueNew(4U, sizeof(CoreXY_Cmd_t), NULL);
-  }
-  if (corexy_cmd_queue == NULL)
-  {
-    status = HAL_ERROR;
-  }
-
   corexy_target_x = 0.0f;
   corexy_target_y = 0.0f;
-  corexy_abort_requested = 0U;
   corexy_state = (status == HAL_OK) ? COREXY_STATE_IDLE : COREXY_STATE_INIT_FAIL;
   return status;
 }
@@ -417,189 +284,557 @@ HAL_StatusTypeDef CoreXY_MoveRelative(float dx, float dy, uint16_t speed,
 }
 
 /**
- * @brief 返回软件坐标原点。
- * @details 使用当前规划坐标作为移动起点，逆解至 (0,0)。
- * @param speed 电机最高速度，单位 RPM。
- * @param acceleration 加速度参数。
- * @retval HAL 状态码。
+ * @brief 通过 USART1 上报指定电机最近一次 DMA 接收诊断信息。
+ * @details 在任务上下文将中断中保存的原始字节、接收事件计数、HAL 错误码和接收重启状态
+ *          格式化为一行文本，便于区分未收到数据、收到异常帧及 UART/DMA 错误。
+ * @param motor 电机对象。
+ * @param motor_name 上报使用的电机标识。
+ * @param usart_name 电机连接的 USART 标识。
  */
-HAL_StatusTypeDef CoreXY_MoveOrigin(uint16_t speed, uint8_t acceleration)
+static void CoreXY_ReportMotorRxDiagnostic(const StepperMotor_t *motor,
+                                           const char *motor_name,
+                                           const char *usart_name)
 {
-  return CoreXY_MoveTo(0.0f, 0.0f, speed, acceleration);
-}
+  char message[256];
+  int offset;
+  uint16_t i;
+  uint16_t rx_length = motor->rx_last_length;
 
-/**
- * @brief 请求执行碰撞回零。
- * @details
- * - 设计意图：UART1 命令处理必须快速返回，不能阻塞数秒；这里只负责检查状态并把命令入队。
- * - 实现要点：先把状态置为 HOMING 预留执行权，再入队；入队失败则恢复原状态。
- * - 注意事项：重复的 init:1 会因状态为 HOMING 而返回 HAL_BUSY。
- * @retval HAL_OK 已入队；HAL_BUSY 正在回零或队列满；HAL_ERROR 未初始化。
- */
-HAL_StatusTypeDef CoreXY_RequestHome(void)
-{
-  CoreXY_Cmd_t cmd = COREXY_CMD_HOME;
-  CoreXY_State_t previous_state;
-
-  if (corexy_state == COREXY_STATE_INIT_FAIL)
+  offset = snprintf(message, sizeof(message),
+                    "DIAG %s %s events=%lu len=%u errors=%lu err=0x%08lX "
+                    "rxstart=%d samples=%u current=%u rx=",
+                    motor_name, usart_name,
+                    (unsigned long)motor->rx_event_count,
+                    (unsigned int)rx_length,
+                    (unsigned long)motor->rx_error_count,
+                    (unsigned long)motor->rx_last_error_code,
+                    (int)motor->rx_start_status,
+                    (unsigned int)motor->current_sample_id,
+                    (unsigned int)motor->current_ma);
+  if ((offset < 0) || ((size_t)offset >= sizeof(message)))
   {
-    return HAL_ERROR;
-  }
-  if ((corexy_state == COREXY_STATE_HOMING) || (corexy_cmd_queue == NULL))
-  {
-    return HAL_BUSY;
+    return;
   }
 
-  previous_state = corexy_state;
-  corexy_state = COREXY_STATE_HOMING;
-  if (osMessageQueuePut(corexy_cmd_queue, &cmd, 0U, 0U) != osOK)
+  for (i = 0U; (i < rx_length) && (i < STEPPER_MOTOR_RX_DMA_BUF_SIZE); ++i)
   {
-    corexy_state = previous_state;
-    return HAL_BUSY;
-  }
-
-  return HAL_OK;
-}
-
-/**
- * @brief 请求中止回零或停止电机。
- * @details
- * - 设计意图：init:0 需要在不与回零任务抢 UART 的前提下尽快生效。
- * - 实现要点：回零中只置中止标志，由回零任务在轮询点撤销并停止；非回零状态直接停止两电机。
- * - 注意事项：中止标志为 volatile，回零任务每轮都会检查。
- * @retval HAL_OK。
- */
-HAL_StatusTypeDef CoreXY_RequestAbort(void)
-{
-  if ((stepper_motor_a1.huart == NULL) || (stepper_motor_b1.huart == NULL))
-  {
-    return HAL_ERROR;
-  }
-
-  corexy_abort_requested = 1U;
-
-  if (corexy_state != COREXY_STATE_HOMING)
-  {
-    CoreXY_StopAll();
-    corexy_abort_requested = 0U;
-    corexy_state = COREXY_STATE_IDLE;
-  }
-
-  return HAL_OK;
-}
-
-/**
- * @brief 阻塞等待一条 CoreXY 命令。
- * @details
- * - 设计意图：让 CoreXYTask 以阻塞方式等待命令，不占用 CPU 轮询。
- * - 实现要点：队列未创建时延时返回 NONE，避免任务空转或解引用空句柄。
- * - 注意事项：只能在 FreeRTOS 任务中调用。
- * @retval 收到的命令；队列不可用时返回 COREXY_CMD_NONE。
- */
-CoreXY_Cmd_t CoreXY_WaitCommand(void)
-{
-  CoreXY_Cmd_t cmd = COREXY_CMD_NONE;
-
-  if (corexy_cmd_queue == NULL)
-  {
-    osDelay(1000U);
-    return cmd;
-  }
-
-  (void)osMessageQueueGet(corexy_cmd_queue, &cmd, NULL, osWaitForever);
-  return cmd;
-}
-
-/**
- * @brief 执行两段式碰撞回零（先 X 后 Y）。
- * @details
- * - 设计意图：X/Y 都有硬限位，使用 EMM_V5 模式 2 靠电流/速度检测碰撞，不需要限位开关。
- * - 实现要点：先 X 轴 A/B 同向撞 X 限位，再 Y 轴 A/B 反向撞 Y 限位；任一段失败立即撤销两路回零并停止。
- * - 数据流：0x3B 状态 bit2=1 表示正在回零，bit3=1 表示失败；两路都完成后软件坐标置 (0,0)。
- * - 注意事项：本函数阻塞数秒，只能在 CoreXYTask 中调用；中止标志在 HomePhase 轮询点检查。
- * @retval HAL_OK 成功；HAL_TIMEOUT 超时；HAL_ERROR 失败或中止。
- */
-HAL_StatusTypeDef CoreXY_HomeTorque(void)
-{
-  HAL_StatusTypeDef status;
-
-  if ((corexy_state == COREXY_STATE_INIT_FAIL) ||
-      (stepper_motor_a1.huart == NULL) || (stepper_motor_b1.huart == NULL))
-  {
-    return HAL_ERROR;
-  }
-  if (corexy_abort_requested)
-  {
-    corexy_abort_requested = 0U;
-    corexy_state = COREXY_STATE_IDLE;
-    return HAL_ERROR;
-  }
-
-  corexy_state = COREXY_STATE_HOMING;
-  corexy_abort_requested = 0U;
-
-  status = CoreXY_HomePhase(COREXY_HOME_X_DIR_A, COREXY_HOME_X_DIR_B);
-  if (status == HAL_OK)
-  {
-    if (corexy_abort_requested)
+    int written = snprintf(&message[offset], sizeof(message) - (size_t)offset,
+                           "%02X ", (unsigned int)motor->rx_last_data[i]);
+    if ((written < 0) || ((size_t)written >= sizeof(message) - (size_t)offset))
     {
-      status = HAL_ERROR;
+      return;
+    }
+    offset += written;
+  }
+
+  {
+    int written = snprintf(&message[offset], sizeof(message) - (size_t)offset,
+                           "\r\n");
+    if ((written < 0) ||
+        ((size_t)written >= sizeof(message) - (size_t)offset))
+    {
+      return;
+    }
+  }
+  Uart1Proto_Send(message);
+}
+
+/**
+ * @brief 以速度模式持续驱动两轴，并通过电流增量完成 CoreXY 碰撞回零。
+ * @details 两轴依次沿负方向持续运动，不依赖位置查询或分段到位判断；任一电机电流相对
+ *          运动基线连续超过阈值即停止两台电机。超时使用 TIM5 微秒计数，与 SysTick 分离。
+ *          异常出口按原因显示 WS2812 颜色，正常结束熄灯。
+ * @retval HAL_OK 两轴回零成功；其他状态表示初始化、通信或运动超时/失败。
+ */
+HAL_StatusTypeDef CoreXY_MoveOrigin(void)
+{
+  /************AICodeBegin************/
+  const uint16_t Threshold = 1850U;
+  const uint8_t Times = 3U;
+  const uint16_t home_speed_rpm = 30U;
+  const uint8_t home_acc = 20U;
+  const uint32_t poll_ms = 20U;
+  const uint32_t reply_timeout_ms = 100U;
+  const uint32_t axis_timeout_ms = 20000U;
+  const uint32_t command_gap_ms = 5U;
+  StepperMotor_t *motors[2] = {&stepper_motor_a1, &stepper_motor_b1};
+  const uint8_t invert[2] =
+  {
+    COREXY_MOTOR_A_INVERT_DIRECTION,
+    COREXY_MOTOR_B_INVERT_DIRECTION
+  };
+  enum
+  {
+    EXIT_REASON_NORMAL = 0U,
+    EXIT_REASON_INIT,
+    EXIT_REASON_MOVE_COMMAND,
+    EXIT_REASON_FEEDBACK_COMMAND,
+    EXIT_REASON_FEEDBACK_TIMEOUT,
+    EXIT_REASON_MOTION_TIMEOUT
+  } exit_reason = EXIT_REASON_NORMAL;
+  HAL_StatusTypeDef status = HAL_OK;
+  bool motion_active = false;
+  uint8_t axis;
+  uint8_t i;
+
+  corexy_origin_error_message = NULL;
+
+  if ((corexy_state == COREXY_STATE_INIT_FAIL) || (Times == 0U))
+  {
+    status = HAL_ERROR;
+    exit_reason = EXIT_REASON_INIT;
+    goto cleanup;
+  }
+
+  for (axis = 0U; axis < 2U; ++axis)
+  {
+    uint16_t baseline_current[2] = {0U, 0U};
+    uint8_t over_threshold[2] = {0U, 0U};
+    bool baseline_ready = false;
+    bool stalled;
+    float dx = (axis == 0U) ? -1.0f : 0.0f;
+    float dy = (axis == 1U) ? -1.0f : 0.0f;
+    float belt_move[2] = {dx + dy, dx - dy};
+    uint8_t direction[2];
+    uint32_t axis_start_us;
+
+    for (i = 0U; i < 2U; ++i)
+    {
+      Emm_V5_Reset_Clog_Pro(motors[i]->huart);
+      osDelay(command_gap_ms);
+    }
+
+    for (i = 0U; i < 2U; ++i)
+    {
+      direction[i] = (uint8_t)((belt_move[i] < 0.0f) ^
+                               (invert[i] != 0U));
+    }
+
+    motion_active = true;
+    for (i = 0U; i < 2U; ++i)
+    {
+      status = StepperMotor_SetSpeed(motors[i], direction[i], home_speed_rpm,
+                                     home_acc, true);
+      if (status != HAL_OK)
+      {
+        exit_reason = EXIT_REASON_MOVE_COMMAND;
+        goto cleanup;
+      }
+    }
+
+    for (i = 0U; i < 2U; ++i)
+    {
+      status = Emm_V5_Synchronous_motion(motors[i]->huart);
+      if (status != HAL_OK)
+      {
+        exit_reason = EXIT_REASON_MOVE_COMMAND;
+        goto cleanup;
+      }
+    }
+
+    for (i = 0U; i < 2U; ++i)
+    {
+      status = CoreXY_WaitTx(motors[i]);
+      if (status != HAL_OK)
+      {
+        exit_reason = EXIT_REASON_MOVE_COMMAND;
+        goto cleanup;
+      }
+    }
+
+    axis_start_us = CoreXY_TimeNowUs();
+    stalled = false;
+    while (!stalled)
+    {
+      uint8_t sample_id[2];
+      uint32_t reply_start_us = CoreXY_TimeNowUs();
+      bool replies_ready = false;
+
+      for (i = 0U; i < 2U; ++i)
+      {
+        sample_id[i] = motors[i]->current_sample_id;
+        status = StepperMotor_ReadCurrent(motors[i]);
+        if (status != HAL_OK)
+        {
+          exit_reason = EXIT_REASON_FEEDBACK_COMMAND;
+          goto cleanup;
+        }
+      }
+
+      while (!replies_ready)
+      {
+        replies_ready =
+            (motors[0]->current_sample_id != sample_id[0]) &&
+            (motors[1]->current_sample_id != sample_id[1]);
+        if (replies_ready)
+        {
+          break;
+        }
+        if ((CoreXY_TimeNowUs() - reply_start_us) >=
+            (reply_timeout_ms * 1000U))
+        {
+          bool motor_a_replied =
+              (motors[0]->current_sample_id != sample_id[0]);
+          bool motor_b_replied =
+              (motors[1]->current_sample_id != sample_id[1]);
+
+          status = HAL_TIMEOUT;
+          exit_reason = EXIT_REASON_FEEDBACK_TIMEOUT;
+          if (!motor_a_replied && !motor_b_replied)
+          {
+            corexy_origin_error_message =
+                "ERR ORIGIN: no current reply from motor A/B\r\n";
+          }
+          else if (!motor_a_replied)
+          {
+            corexy_origin_error_message =
+                "ERR ORIGIN: no current reply from motor A (USART3)\r\n";
+          }
+          else
+          {
+            corexy_origin_error_message =
+                "ERR ORIGIN: no current reply from motor B (USART2)\r\n";
+          }
+          goto cleanup;
+        }
+        osDelay(1U);
+      }
+
+      if (!baseline_ready)
+      {
+        baseline_current[0] = motors[0]->current_ma;
+        baseline_current[1] = motors[1]->current_ma;
+        baseline_ready = true;
+      }
+      else
+      {
+        for (i = 0U; i < 2U; ++i)
+        {
+          int32_t current_delta = (int32_t)motors[i]->current_ma -
+                                  (int32_t)baseline_current[i];
+          if (current_delta >= (int32_t)Threshold)
+          {
+            if (over_threshold[i] < Times)
+            {
+              over_threshold[i]++;
+            }
+            if (over_threshold[i] >= Times)
+            {
+              stalled = true;
+            }
+          }
+          else
+          {
+            over_threshold[i] = 0U;
+          }
+        }
+      }
+
+      if (!stalled &&
+          ((CoreXY_TimeNowUs() - axis_start_us) >= (axis_timeout_ms * 1000U)))
+      {
+        status = HAL_TIMEOUT;
+        exit_reason = EXIT_REASON_MOTION_TIMEOUT;
+        goto cleanup;
+      }
+      if (!stalled)
+      {
+        osDelay(poll_ms);
+      }
+    }
+
+    CoreXY_StopAll();
+    motion_active = false;
+    for (i = 0U; i < 2U; ++i)
+    {
+      Emm_V5_Reset_Clog_Pro(motors[i]->huart);
+      osDelay(command_gap_ms);
+      Emm_V5_Reset_CurPos_To_Zero(motors[i]->huart);
+      osDelay(command_gap_ms);
+      motors[i]->position_pulses = 0;
+    }
+    if (axis == 0U)
+    {
+      corexy_target_x = 0.0f;
     }
     else
     {
-      status = CoreXY_HomePhase(COREXY_HOME_Y_DIR_A, COREXY_HOME_Y_DIR_B);
+      corexy_target_y = 0.0f;
     }
   }
 
-  if (status == HAL_OK)
+cleanup:
+  if (motion_active)
   {
-    corexy_target_x = 0.0f;
-    corexy_target_y = 0.0f;
-    corexy_state = COREXY_STATE_READY;
+    CoreXY_StopAll();
   }
-  else
+  if (exit_reason == EXIT_REASON_FEEDBACK_TIMEOUT)
   {
-    CoreXY_AbortHoming();
-    corexy_state = corexy_abort_requested ? COREXY_STATE_IDLE : COREXY_STATE_ERROR;
+    CoreXY_ReportMotorRxDiagnostic(motors[0], "A", "USART3");
+    CoreXY_ReportMotorRxDiagnostic(motors[1], "B", "USART2");
+  }
+  switch (exit_reason)
+  {
+    case EXIT_REASON_INIT:
+      WS2812_SetAll(255U, 0U, 0U);
+      corexy_origin_error_message = "ERR ORIGIN: init failed\r\n";
+      break;
+    case EXIT_REASON_MOVE_COMMAND:
+      WS2812_SetAll(255U, 255U, 255U);
+      corexy_origin_error_message = "ERR ORIGIN: motor command failed\r\n";
+      break;
+    case EXIT_REASON_FEEDBACK_COMMAND:
+      WS2812_SetAll(255U, 255U, 255U);
+      corexy_origin_error_message = "ERR ORIGIN: current query failed\r\n";
+      break;
+    case EXIT_REASON_FEEDBACK_TIMEOUT:
+      WS2812_SetAll(255U, 255U, 255U);//
+      if (corexy_origin_error_message == NULL)
+      {
+        corexy_origin_error_message = "ERR ORIGIN: current feedback timeout\r\n";
+      }
+      break;
+    case EXIT_REASON_MOTION_TIMEOUT://
+      WS2812_SetAll(255U, 255U, 255U);
+      corexy_origin_error_message = "ERR ORIGIN: current threshold not reached\r\n";
+      break;
+    case EXIT_REASON_NORMAL:
+    default:
+      WS2812_SetAll(0U, 0U, 0U);
+      break;
+  }
+  if (WS2812_Show() != HAL_OK && status == HAL_OK)
+  {
+    status = HAL_ERROR;
+    corexy_origin_error_message = "ERR ORIGIN: WS2812 update failed\r\n";
+  }
+  return status;
+  /************AICodeEnd************/
+}
+ /************AICodeBegin1************/
+/**
+ * @brief 仅使用 USART2 电机电流反馈完成 CoreXY 两轴回零。
+ * @details
+ * - 设计意图：在 USART3 电流反馈不可用时，以 USART2 对应的电机 B 电流变化判定回零。
+ * - 实现要点：先沿 X 方向运动；仅当 USART2 电流连续达到阈值并停下两台电机后，
+ *   才进入纯 Y 方向运动。每次仅查询电机 B 的电流，完成后清零该轴及驱动器位置。
+ * - 注意事项：在 FreeRTOS 任务上下文调用；本函数独立于 CoreXY_MoveOrigin，
+ *   不会自动替换现有任务中的回零调用。
+ * @retval HAL_OK 两轴回零成功；其他状态表示命令、反馈或运动超时/失败。
+ */
+HAL_StatusTypeDef CoreXY_MoveOriginUSART2(void)
+{
+  const uint16_t threshold = 400U;
+  const uint8_t required_samples = 3U;
+  const uint16_t home_speed_rpm = 30U;
+  const uint8_t home_acceleration = 20U;
+  const uint32_t poll_ms = 20U;
+  const uint32_t reply_timeout_ms = 100U;
+  const uint32_t axis_timeout_ms = 20000U;
+  const uint32_t command_gap_ms = 5U;
+  StepperMotor_t *motors[2] = {&stepper_motor_a1, &stepper_motor_b1};
+  StepperMotor_t *feedback_motor = &stepper_motor_b1;
+  const uint8_t invert[2] =
+  {
+    COREXY_MOTOR_A_INVERT_DIRECTION,
+    COREXY_MOTOR_B_INVERT_DIRECTION
+  };
+  HAL_StatusTypeDef status = HAL_OK;
+  bool motion_active = false;
+  uint8_t axis;
+  uint8_t i;
+
+  corexy_origin_error_message = NULL;
+  if ((corexy_state == COREXY_STATE_INIT_FAIL) || (required_samples == 0U))
+  {
+    status = HAL_ERROR;
+    corexy_origin_error_message = "ERR ORIGIN: init failed\r\n";
+    WS2812_SetAll(255U, 0U, 0U);
+    goto cleanup;
   }
 
-  corexy_abort_requested = 0U;
+  for (axis = 0U; axis < 2U; ++axis)
+  {
+    uint16_t baseline_current = 0U;
+    uint8_t over_threshold = 0U;
+    bool baseline_ready = false;
+    bool stalled = false;
+    /* axis 0 先回 X；只有 X 电流确认并停机后才进入 axis 1 的纯 Y 运动。 */
+    float dx = (axis == 0U) ? -1.0f : 0.0f;
+    float dy = (axis == 1U) ? -1.0f : 0.0f;
+    float belt_move[2] = {dx + dy, dx - dy};
+    uint8_t direction[2];
+    uint32_t axis_start_us;
+
+    for (i = 0U; i < 2U; ++i)
+    {
+      Emm_V5_Reset_Clog_Pro(motors[i]->huart);
+      osDelay(command_gap_ms);
+      direction[i] = (uint8_t)((belt_move[i] < 0.0f) ^
+                               (invert[i] != 0U));
+    }
+
+    motion_active = true;
+    for (i = 0U; i < 2U; ++i)
+    {
+      status = StepperMotor_SetSpeed(motors[i], direction[i], home_speed_rpm,
+                                     home_acceleration, true);
+      if (status != HAL_OK)
+      {
+        corexy_origin_error_message = "ERR ORIGIN: motor command failed\r\n";
+        WS2812_SetAll(255U, 255U, 255U);
+        goto cleanup;
+      }
+    }
+
+    for (i = 0U; i < 2U; ++i)
+    {
+      status = Emm_V5_Synchronous_motion(motors[i]->huart);
+      if (status != HAL_OK)
+      {
+        corexy_origin_error_message = "ERR ORIGIN: motor command failed\r\n";
+        WS2812_SetAll(255U, 255U, 255U);
+        goto cleanup;
+      }
+    }
+
+    for (i = 0U; i < 2U; ++i)
+    {
+      status = CoreXY_WaitTx(motors[i]);
+      if (status != HAL_OK)
+      {
+        corexy_origin_error_message = "ERR ORIGIN: motor command failed\r\n";
+        WS2812_SetAll(255U, 255U, 255U);
+        goto cleanup;
+      }
+    }
+
+    axis_start_us = CoreXY_TimeNowUs();
+    while (!stalled)
+    {
+      uint8_t sample_id = feedback_motor->current_sample_id;
+      uint32_t reply_start_us = CoreXY_TimeNowUs();
+
+      status = StepperMotor_ReadCurrent(feedback_motor);
+      if (status != HAL_OK)
+      {
+        corexy_origin_error_message = "ERR ORIGIN: current query failed\r\n";
+        WS2812_SetAll(255U, 255U, 255U);
+        goto cleanup;
+      }
+
+      while (feedback_motor->current_sample_id == sample_id)
+      {
+        if ((CoreXY_TimeNowUs() - reply_start_us) >=
+            (reply_timeout_ms * 1000U))
+        {
+          status = HAL_TIMEOUT;
+          corexy_origin_error_message =
+              "ERR ORIGIN: no current reply from motor B (USART2)\r\n";
+          CoreXY_ReportMotorRxDiagnostic(feedback_motor, "B", "USART2");
+          WS2812_SetAll(255U, 255U, 255U);
+          goto cleanup;
+        }
+        osDelay(1U);
+      }
+
+      if (!baseline_ready)
+      {
+        baseline_current = feedback_motor->current_ma;
+        baseline_ready = true;
+      }
+      else if (((int32_t)feedback_motor->current_ma -
+                (int32_t)baseline_current) >= (int32_t)threshold)
+      {
+        if (over_threshold < required_samples)
+        {
+          over_threshold++;
+        }
+        stalled = (over_threshold >= required_samples);
+      }
+      else
+      {
+        over_threshold = 0U;
+      }
+
+      if (!stalled &&
+          ((CoreXY_TimeNowUs() - axis_start_us) >= (axis_timeout_ms * 1000U)))
+      {
+        status = HAL_TIMEOUT;
+        corexy_origin_error_message =
+            "ERR ORIGIN: current threshold not reached\r\n";
+        WS2812_SetAll(255U, 255U, 255U);
+        goto cleanup;
+      }
+      if (!stalled)
+      {
+        osDelay(poll_ms);
+      }
+    }
+
+    CoreXY_StopAll();
+    motion_active = false;
+    for (i = 0U; i < 2U; ++i)
+    {
+      Emm_V5_Reset_Clog_Pro(motors[i]->huart);
+      osDelay(command_gap_ms);
+      Emm_V5_Reset_CurPos_To_Zero(motors[i]->huart);
+      osDelay(command_gap_ms);
+      motors[i]->position_pulses = 0;
+    }
+    if (axis == 0U)
+    {
+      corexy_target_x = 0.0f;
+    }
+    else
+    {
+      corexy_target_y = 0.0f;
+    }
+  }
+
+  WS2812_SetAll(0U, 0U, 0U);
+
+cleanup:
+  if (motion_active)
+  {
+    CoreXY_StopAll();
+  }
+  if ((WS2812_Show() != HAL_OK) && (status == HAL_OK))
+  {
+    status = HAL_ERROR;
+    corexy_origin_error_message = "ERR ORIGIN: WS2812 update failed\r\n";
+  }
   return status;
 }
-
+  /************AICodeEnd1************/
 /**
- * @brief CoreXY 回零任务入口。
+ * @brief CoreXY 电机任务入口。
  * @details
- * - 设计意图：把阻塞数秒的回零过程从 UART1 命令接收任务中隔离出来。
- * - 实现要点：永久等待命令队列；收到 HOME 后执行两段式碰撞回零，并用 UART1 回复结果。
- * - 注意事项：Uart1Proto_Send 内部有互斥锁，可与其他任务并发调用。
+ * - 设计意图：为 CoreXY 电机控制保留独立 FreeRTOS 任务入口。
+ * - 实现要点：上电先做一次碰撞回零（先 X 后 Y）；失败时在 UART1 报告具体原因，
+ *   不自动重试，避免反复顶限位；之后进入 1s 周期的空循环，等待后续命令接入。
+ * - 注意事项：回零是阻塞调用（两轴各有 20s 安全超时），期间本任务不处理其它请求。
  * @param argument 未使用。
  */
 void CoreXYTask(void *argument)
 {
+  HAL_StatusTypeDef origin_status;
+
   (void)argument;
+
+  /* 上电碰撞回零一次（先 X 后 Y）；失败只报一行，不自动重试，避免反复顶限位 */
+
+  origin_status = CoreXY_MoveOriginUSART2();
+  if (origin_status != HAL_OK)
+  {
+    Uart1Proto_Send((corexy_origin_error_message != NULL) ?
+                    corexy_origin_error_message :
+                    "ERR ORIGIN: unknown failure\r\n");
+  }
 
   for (;;)
   {
-    CoreXY_Cmd_t cmd = CoreXY_WaitCommand();
-
-    if (cmd == COREXY_CMD_HOME)
-    {
-      HAL_StatusTypeDef status = CoreXY_HomeTorque();
-
-      if (status == HAL_OK)
-      {
-        Uart1Proto_Send("OK HOME DONE\r\n");
-      }
-      else if (status == HAL_TIMEOUT)
-      {
-        Uart1Proto_Send("ERR HOME TIMEOUT\r\n");
-      }
-      else
-      {
-        Uart1Proto_Send("ERR HOME\r\n");
-      }
-    }
+    osDelay(1000U);
   }
 }
 
@@ -624,12 +859,6 @@ const char *CoreXY_GetStateString(void)
   {
     case COREXY_STATE_IDLE:
       return "IDLE";
-    case COREXY_STATE_HOMING:
-      return "HOMING";
-    case COREXY_STATE_READY:
-      return "READY";
-    case COREXY_STATE_ERROR:
-      return "ERROR";
     case COREXY_STATE_INIT_FAIL:
       return "INIT_FAIL";
     default:

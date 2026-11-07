@@ -184,12 +184,11 @@ void Uart1Proto_Feed(const uint8_t *data, uint16_t len)
  * @brief 处理一整行命令
  *
  * @details
- * - 设计意图：分别处理水泵开关和 CoreXY 命令，避免两个系统互相联动
+ * - 设计意图：分别处理水泵开关和 CoreXY 状态查询，避免两个系统互相联动
  * - 实现要点：
  *   1. 用 strtok 取出首个词，再按 ':' 拆成 key/value
- *   2. init:1 请求碰撞回零；init:0 中止回零并停止电机
- *   3. switch:1/0 分别调用原有水泵启停函数；PUMP 占空比命令不支持
- *   4. STATUS 只返回 CoreXY 状态；PING 保留用于调试
+ *   2. switch:1/0 分别调用原有水泵启停函数；PUMP 占空比命令不支持
+ *   3. STATUS 返回 CoreXY 初始化状态；PING 保留用于调试
  * - 注意事项：proto_line 会被 strtok 原地修改，只在解析期间使用
  *
  * @param line 以 '\0' 结尾的一行命令
@@ -234,43 +233,6 @@ static void Uart1Proto_ProcessLine(char *line)
   *colon = '\0';
   key = token;
   value = colon + 1;
-
-  if (Uart1Proto_StrIeq(key, "INIT") != 0)
-  {
-    if (Uart1Proto_StrIeq(value, "1") != 0)
-    {
-      HAL_StatusTypeDef status = CoreXY_RequestHome();
-      if (status == HAL_OK)
-      {
-        Uart1Proto_Send("OK INIT=1\r\n");
-      }
-      else if (status == HAL_BUSY)
-      {
-        Uart1Proto_Send("ERR BUSY\r\n");
-      }
-      else
-      {
-        Uart1Proto_Send("ERR COREXY\r\n");
-      }
-      return;
-    }
-
-    if (Uart1Proto_StrIeq(value, "0") != 0)
-    {
-      if (CoreXY_RequestAbort() == HAL_OK)
-      {
-        Uart1Proto_Send("OK INIT=0\r\n");
-      }
-      else
-      {
-        Uart1Proto_Send("ERR COREXY\r\n");
-      }
-      return;
-    }
-
-    Uart1Proto_Send("ERR ARG\r\n");
-    return;
-  }
 
   if (Uart1Proto_StrIeq(key, "PUMP") != 0)
   {

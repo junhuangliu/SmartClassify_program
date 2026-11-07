@@ -101,6 +101,7 @@ void StartDefaultTask(void *argument);
 /* USER CODE BEGIN PFP */
 void Uart1RxTask(void *argument);
 void WS2812Task(void *argument);
+void WaterPumpTask(void *argument);
 void CoreXYTask(void *argument);
 /* USER CODE END PFP */
 
@@ -158,6 +159,7 @@ int main(void)
     /* 独立初始化泵/阀 PWM；启停由水泵接口单独控制 */
     WaterPump_Init();
     (void)CoreXY_Init();
+
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -206,12 +208,19 @@ int main(void)
   };
   osThreadNew(WS2812Task, NULL, &ws2812Task_attributes);
 
+  const osThreadAttr_t waterPumpTask_attributes = {
+    .name = "WaterPumpTask",
+    .stack_size = 128 * 4,
+    .priority = (osPriority_t) osPriorityNormal,
+  };
+  osThreadNew(WaterPumpTask, NULL, &waterPumpTask_attributes);
+
   const osThreadAttr_t corexyTask_attributes = {
     .name = "CoreXYTask",
     .stack_size = 512 * 4,
     .priority = (osPriority_t) osPriorityNormal,
-    };
-    osThreadNew(CoreXYTask, NULL, &corexyTask_attributes);
+  };
+  osThreadNew(CoreXYTask, NULL, &corexyTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

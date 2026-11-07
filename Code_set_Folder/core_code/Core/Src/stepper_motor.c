@@ -5,7 +5,8 @@
 #define STEPPER_MOTOR_FRAME_END 0x6BU
 #define STEPPER_MOTOR_CMD_READ_SPEED 0x35U
 #define STEPPER_MOTOR_CMD_READ_POSITION 0x36U
-#define STEPPER_MOTOR_CMD_READ_HOMING 0x3BU
+#define STEPPER_MOTOR_CMD_READ_CURRENT 0x27U
+#define STEPPER_MOTOR_CURRENT_FRAME_SIZE 5U
 #define STEPPER_MOTOR_TX_TIMEOUT_MS 100U
 
 StepperMotor_t stepper_motor_a1;
@@ -52,11 +53,13 @@ static HAL_StatusTypeDef StepperMotor_StartRx(StepperMotor_t *motor)
 
   if (motor->huart->hdmarx == NULL)
   {
+    motor->rx_start_status = HAL_ERROR;
     return HAL_ERROR;
   }
 
   status = HAL_UARTEx_ReceiveToIdle_DMA(motor->huart, motor->rx_dma_buf,
                                        STEPPER_MOTOR_RX_DMA_BUF_SIZE);
+  motor->rx_start_status = status;
   if (status == HAL_OK)
   {
     __HAL_DMA_DISABLE_IT(motor->huart->hdmarx, DMA_IT_HT);
@@ -77,11 +80,41 @@ HAL_StatusTypeDef StepperMotor_Init(StepperMotor_t *motor, UART_HandleTypeDef *h
   motor->huart = huart;
   motor->speed_rpm = 0;
   motor->position_pulses = 0;
-  motor->homing_status = 0U;
   motor->valid_data = 0U;
+  motor->current_ma = 0U;
+  motor->current_sample_id = 0U;
   motor->rx_length = 0U;
   motor->rx_dma_size = 0U;
+  motor->rx_event_count = 0U;
+  motor->rx_error_count = 0U;
+  motor->rx_last_error_code = HAL_UART_ERROR_NONE;
+  motor->rx_start_status = HAL_OK;
+  motor->rx_last_length = 0U;
   return StepperMotor_StartRx(motor);
+}
+
+/**
+ * @brief 保存最近一次 UART DMA 接收事件中的原始数据。
+ * @details 接收中断只更新诊断快照，不通过阻塞 UART1 发送；任务上下文在反馈超时时读取该快照。
+ * @param motor 对应的电机对象。
+ * @param data 本次新接收数据起始地址。
+ * @param length 本次新接收的字节数。
+ */
+static void StepperMotor_RecordRxEvent(StepperMotor_t *motor,
+                                       const uint8_t *data, uint16_t length)
+{
+  uint16_t i;
+
+  motor->rx_event_count++;
+  if (length > STEPPER_MOTOR_RX_DMA_BUF_SIZE)
+  {
+    length = STEPPER_MOTOR_RX_DMA_BUF_SIZE;
+  }
+  motor->rx_last_length = length;
+  for (i = 0U; i < length; ++i)
+  {
+    motor->rx_last_data[i] = data[i];
+  }
 }
 
 /**
@@ -102,6 +135,10 @@ void StepperMotor_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
   {
     if (size > stepper_motor_a1.rx_dma_size)
     {
+      StepperMotor_RecordRxEvent(
+          &stepper_motor_a1,
+          &stepper_motor_a1.rx_dma_buf[stepper_motor_a1.rx_dma_size],
+          (uint16_t)(size - stepper_motor_a1.rx_dma_size));
       (void)StepperMotor_ParseDmaData(&stepper_motor_a1,
                                       &stepper_motor_a1.rx_dma_buf[stepper_motor_a1.rx_dma_size],
                                       (uint16_t)(size - stepper_motor_a1.rx_dma_size));
@@ -113,6 +150,10 @@ void StepperMotor_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
   {
     if (size > stepper_motor_a2.rx_dma_size)
     {
+      StepperMotor_RecordRxEvent(
+          &stepper_motor_a2,
+          &stepper_motor_a2.rx_dma_buf[stepper_motor_a2.rx_dma_size],
+          (uint16_t)(size - stepper_motor_a2.rx_dma_size));
       (void)StepperMotor_ParseDmaData(&stepper_motor_a2,
                                       &stepper_motor_a2.rx_dma_buf[stepper_motor_a2.rx_dma_size],
                                       (uint16_t)(size - stepper_motor_a2.rx_dma_size));
@@ -124,6 +165,10 @@ void StepperMotor_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
   {
     if (size > stepper_motor_b1.rx_dma_size)
     {
+      StepperMotor_RecordRxEvent(
+          &stepper_motor_b1,
+          &stepper_motor_b1.rx_dma_buf[stepper_motor_b1.rx_dma_size],
+          (uint16_t)(size - stepper_motor_b1.rx_dma_size));
       (void)StepperMotor_ParseDmaData(&stepper_motor_b1,
                                       &stepper_motor_b1.rx_dma_buf[stepper_motor_b1.rx_dma_size],
                                       (uint16_t)(size - stepper_motor_b1.rx_dma_size));
@@ -135,6 +180,10 @@ void StepperMotor_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
   {
     if (size > stepper_motor_b2.rx_dma_size)
     {
+      StepperMotor_RecordRxEvent(
+          &stepper_motor_b2,
+          &stepper_motor_b2.rx_dma_buf[stepper_motor_b2.rx_dma_size],
+          (uint16_t)(size - stepper_motor_b2.rx_dma_size));
       (void)StepperMotor_ParseDmaData(&stepper_motor_b2,
                                       &stepper_motor_b2.rx_dma_buf[stepper_motor_b2.rx_dma_size],
                                       (uint16_t)(size - stepper_motor_b2.rx_dma_size));
@@ -154,6 +203,8 @@ void StepperMotor_ErrorCallback(UART_HandleTypeDef *huart)
 {
   if (huart == stepper_motor_a1.huart)
   {
+    stepper_motor_a1.rx_error_count++;
+    stepper_motor_a1.rx_last_error_code = huart->ErrorCode;
     __HAL_UART_CLEAR_OREFLAG(huart);
     stepper_motor_a1.rx_length = 0U;
     stepper_motor_a1.rx_dma_size = 0U;
@@ -161,6 +212,8 @@ void StepperMotor_ErrorCallback(UART_HandleTypeDef *huart)
   }
   else if (huart == stepper_motor_a2.huart)
   {
+    stepper_motor_a2.rx_error_count++;
+    stepper_motor_a2.rx_last_error_code = huart->ErrorCode;
     __HAL_UART_CLEAR_OREFLAG(huart);
     stepper_motor_a2.rx_length = 0U;
     stepper_motor_a2.rx_dma_size = 0U;
@@ -168,6 +221,8 @@ void StepperMotor_ErrorCallback(UART_HandleTypeDef *huart)
   }
   else if (huart == stepper_motor_b1.huart)
   {
+    stepper_motor_b1.rx_error_count++;
+    stepper_motor_b1.rx_last_error_code = huart->ErrorCode;
     __HAL_UART_CLEAR_OREFLAG(huart);
     stepper_motor_b1.rx_length = 0U;
     stepper_motor_b1.rx_dma_size = 0U;
@@ -175,6 +230,8 @@ void StepperMotor_ErrorCallback(UART_HandleTypeDef *huart)
   }
   else if (huart == stepper_motor_b2.huart)
   {
+    stepper_motor_b2.rx_error_count++;
+    stepper_motor_b2.rx_last_error_code = huart->ErrorCode;
     __HAL_UART_CLEAR_OREFLAG(huart);
     stepper_motor_b2.rx_length = 0U;
     stepper_motor_b2.rx_dma_size = 0U;
@@ -217,6 +274,26 @@ HAL_StatusTypeDef StepperMotor_ReadPosition(StepperMotor_t *motor)
 }
 
 /**
+ * @brief 请求读取电机相电流（0x27）。
+ * @details
+ * - 设计意图：为上层提供驱动器反馈的实际相电流，供负载变化检测使用。
+ * - 实现要点：先等共享发送缓冲区可用，再下发 0x43+0x27；应答由 UART 空闲中断解析。
+ * - 注意事项：本函数等待 DMA 发送完成但不等待应答，不能在中断上下文调用。
+ * @param motor 电机对象。
+ * @retval HAL 状态码；HAL_TIMEOUT 表示发送等待超时。
+ */
+HAL_StatusTypeDef StepperMotor_ReadCurrent(StepperMotor_t *motor)
+{
+  HAL_StatusTypeDef status = StepperMotor_WaitTx(motor);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+  status = Emm_V5_Read_Sys_Params(motor->huart, S_CPHA);
+  return (status == HAL_OK) ? StepperMotor_WaitTx(motor) : status;
+}
+
+/**
  * @brief 立即停止电机。
  * @details 等待该 UART 的 DMA 命令发送完成后，再发送 EMM_V5 停止命令。
  * @param motor 电机对象。
@@ -231,123 +308,6 @@ HAL_StatusTypeDef StepperMotor_Stop(StepperMotor_t *motor)
   }
   status = Emm_V5_Stop_Now(motor->huart, false);
   return (status == HAL_OK) ? StepperMotor_WaitTx(motor) : status;
-}
-
-/**
- * @brief 清除本电机缓存的回零状态。
- * @details
- * - 设计意图：0x3B 查询是异步应答，清除有效标志后才能判断本次查询是否真的收到新数据。
- * - 实现要点：同时清零状态字节和 valid_data 中的回零有效位，不影响速度/位置的有效位。
- * - 注意事项：可在任务或中断上下文调用；字段为 volatile，避免编译器合并读写。
- * @param motor 电机对象。
- */
-void StepperMotor_ClearHomingStatus(StepperMotor_t *motor)
-{
-  motor->homing_status = 0U;
-  motor->valid_data &= ~STEPPER_MOTOR_HOMING_VALID;
-}
-
-/**
- * @brief 请求读取本电机回零状态。
- * @details
- * - 设计意图：碰撞回零期间需要反复查询 0x3B，确认电机是否仍在回零、是否失败。
- * - 实现要点：先等待共享发送缓冲区空闲，再发 S_OFLAG 查询，最后等待 DMA 发完；
- *   应答由 StepperMotor_ParseDmaData 在 UART 空闲中断里写入 homing_status。
- * - 注意事项：本函数只保证命令发完，不保证应答已到；调用方应留出总线空闲时间再检查有效位。
- * @param motor 电机对象。
- * @retval HAL 状态码。
- */
-HAL_StatusTypeDef StepperMotor_ReadHomingStatus(StepperMotor_t *motor)
-{
-  HAL_StatusTypeDef status = StepperMotor_WaitTx(motor);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-  status = Emm_V5_Read_Sys_Params(motor->huart, S_OFLAG);
-  return (status == HAL_OK) ? StepperMotor_WaitTx(motor) : status;
-}
-
-/**
- * @brief 配置 EMM_V5 回零参数。
- * @details
- * - 设计意图：把模式、方向、速度、超时和碰撞检测阈值一次性写入驱动器，供后续回零触发使用。
- * - 实现要点：EMM_V5 命令缓冲区是静态共享的，因此发送前后都等待本 UART 的 DMA 发送完成；
- *   A/B 两路必须串行调用，不能同时进入本函数。
- * - 数据流：参数经 Emm_V5_Origin_Modify_Params 打包，通过本电机 UART 的 DMA 发出。
- * @param motor 电机对象。
- * @param mode 回零模式，2 为无限位碰撞回零。
- * @param direction 回零方向，0 为正向，1 为反向。
- * @param vel 回零速度，单位 RPM。
- * @param timeout_ms 回零超时，单位 ms。
- * @param sl_vel 碰撞检测速度阈值，单位 RPM。
- * @param sl_ma 碰撞检测电流阈值，单位 mA。
- * @param sl_ms 碰撞检测持续时间，单位 ms。
- * @param store 是否将参数保存到电机内部。
- * @retval HAL 状态码。
- */
-HAL_StatusTypeDef StepperMotor_HomeSetParams(StepperMotor_t *motor, uint8_t mode,
-                                             uint8_t direction, uint16_t vel,
-                                             uint32_t timeout_ms, uint16_t sl_vel,
-                                             uint16_t sl_ma, uint16_t sl_ms,
-                                             bool store)
-{
-  HAL_StatusTypeDef status = StepperMotor_WaitTx(motor);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-  Emm_V5_Origin_Modify_Params(motor->huart, store, mode, direction, vel,
-                              timeout_ms, sl_vel, sl_ma, sl_ms, false);
-  return StepperMotor_WaitTx(motor);
-}
-
-/**
- * @brief 触发本电机回零。
- * @details
- * - 设计意图：在参数配置完成后启动回零；sync=true 时先缓存命令，等同步触发后两轴一起动。
- * - 实现要点：等待 DMA 空闲后发送回零触发命令，再等待发送完成，防止共享缓冲区被下一路覆盖。
- * - 注意事项：sync=true 时还需由调用方发送 Emm_V5_Synchronous_motion 才会真正开始运动。
- * @param motor 电机对象。
- * @param mode 回零模式，2 为无限位碰撞回零。
- * @param sync 是否等待 EMM_V5 同步触发。
- * @retval HAL 状态码。
- */
-HAL_StatusTypeDef StepperMotor_HomeTrigger(StepperMotor_t *motor, uint8_t mode,
-                                           bool sync)
-{
-  HAL_StatusTypeDef status = StepperMotor_WaitTx(motor);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-  Emm_V5_Origin_Trigger_Return(motor->huart, mode, sync);
-  return StepperMotor_WaitTx(motor);
-}
-
-/**
- * @brief 中止本电机回零并立即停机。
- * @details
- * - 设计意图：回零失败、超时或用户发 init:0 时，必须尽快撤销回零并停止电机，避免持续顶住硬限位。
- * - 实现要点：先发回零中断命令，再发立即停止命令，两条命令之间都等待 DMA 发送完成。
- * - 注意事项：本函数会占用该 UART 的发送通道，只应由正在执行回零的任务调用，避免与状态轮询并发。
- * @param motor 电机对象。
- * @retval HAL 状态码。
- */
-HAL_StatusTypeDef StepperMotor_HomeAbort(StepperMotor_t *motor)
-{
-  HAL_StatusTypeDef status = StepperMotor_WaitTx(motor);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-  Emm_V5_Origin_Interrupt(motor->huart);
-  status = StepperMotor_WaitTx(motor);
-  if (status != HAL_OK)
-  {
-    return status;
-  }
-  return StepperMotor_Stop(motor);
 }
 
 /**
@@ -404,7 +364,8 @@ HAL_StatusTypeDef StepperMotor_SetPosition(StepperMotor_t *motor, uint8_t direct
 /////****************************************///////////////////
 /**
  * @brief 解析本电机 UART 收到的 DMA 数据。
- * @details 按地址、命令码和帧结束字节解析速度或位置响应；数据位标记用于调用方判断测量值是否更新。
+ * @details 按地址、命令码和帧结束字节解析速度、位置或相电流响应；
+ *          有效相电流响应会更新 current_ma 并递增 current_sample_id。
  * @param motor 接收数据的电机对象。
  * @param data DMA 接收数据。
  * @param length 本次新收到的字节数。
@@ -433,7 +394,7 @@ bool StepperMotor_ParseDmaData(StepperMotor_t *motor, const uint8_t *data,
     if ((motor->rx_length == 1U) &&
         (byte != STEPPER_MOTOR_CMD_READ_SPEED) &&
         (byte != STEPPER_MOTOR_CMD_READ_POSITION) &&
-        (byte != STEPPER_MOTOR_CMD_READ_HOMING))
+        (byte != STEPPER_MOTOR_CMD_READ_CURRENT))
     {
       motor->rx_length = (byte == STEPPER_MOTOR_ADDRESS) ? 1U : 0U;
       if (motor->rx_length != 0U)
@@ -459,8 +420,8 @@ bool StepperMotor_ParseDmaData(StepperMotor_t *motor, const uint8_t *data,
       case STEPPER_MOTOR_CMD_READ_POSITION:
         frame_length = STEPPER_MOTOR_RX_FRAME_SIZE;
         break;
-      case STEPPER_MOTOR_CMD_READ_HOMING:
-        frame_length = STEPPER_MOTOR_HOMING_FRAME_SIZE;
+      case STEPPER_MOTOR_CMD_READ_CURRENT:
+        frame_length = STEPPER_MOTOR_CURRENT_FRAME_SIZE;
         break;
       default:
         frame_length = 0U;
@@ -473,48 +434,52 @@ bool StepperMotor_ParseDmaData(StepperMotor_t *motor, const uint8_t *data,
       continue;
     }
 
-    if (motor->rx_length == frame_length)
+    if (motor->rx_length >= frame_length)
     {
-      if (motor->rx_frame[frame_length - 1U] == STEPPER_MOTOR_FRAME_END)
+      if (motor->rx_frame[motor->rx_length - 1U] != STEPPER_MOTOR_FRAME_END)
       {
-        switch (motor->rx_frame[1])
+        motor->rx_length = 0U;
+        continue;
+      }
+
+      switch (motor->rx_frame[1])
+      {
+        case STEPPER_MOTOR_CMD_READ_SPEED:
         {
-          case STEPPER_MOTOR_CMD_READ_SPEED:
+          uint16_t speed = ((uint16_t)motor->rx_frame[3] << 8) | motor->rx_frame[4];
+          if (speed <= INT16_MAX)
           {
-            uint16_t speed = ((uint16_t)motor->rx_frame[3] << 8) | motor->rx_frame[4];
-            if (speed <= INT16_MAX)
-            {
-              motor->speed_rpm = (motor->rx_frame[2] == 0U) ?
-                                 (int16_t)speed : -(int16_t)speed;
-              motor->valid_data |= STEPPER_MOTOR_SPEED_VALID;
-              parsed = true;
-            }
-            break;
-          }
-          case STEPPER_MOTOR_CMD_READ_POSITION:
-          {
-            uint32_t position = ((uint32_t)motor->rx_frame[3] << 24) |
-                                ((uint32_t)motor->rx_frame[4] << 16) |
-                                ((uint32_t)motor->rx_frame[5] << 8) |
-                                motor->rx_frame[6];
-            int64_t signed_position = (motor->rx_frame[2] == 0U) ?
-                                      (int64_t)position : -(int64_t)position;
-            if ((signed_position >= INT32_MIN) && (signed_position <= INT32_MAX))
-            {
-              motor->position_pulses = (int32_t)signed_position;
-              motor->valid_data |= STEPPER_MOTOR_POSITION_VALID;
-              parsed = true;
-            }
-            break;
-          }
-          case STEPPER_MOTOR_CMD_READ_HOMING:
-            motor->homing_status = motor->rx_frame[2];
-            motor->valid_data |= STEPPER_MOTOR_HOMING_VALID;
+            motor->speed_rpm = (motor->rx_frame[2] == 0U) ?
+                               (int16_t)speed : -(int16_t)speed;
+            motor->valid_data |= STEPPER_MOTOR_SPEED_VALID;
             parsed = true;
-            break;
-          default:
-            break;
+          }
+          break;
         }
+        case STEPPER_MOTOR_CMD_READ_POSITION:
+        {
+          uint32_t position = ((uint32_t)motor->rx_frame[3] << 24) |
+                              ((uint32_t)motor->rx_frame[4] << 16) |
+                              ((uint32_t)motor->rx_frame[5] << 8) |
+                              motor->rx_frame[6];
+          int64_t signed_position = (motor->rx_frame[2] == 0U) ?
+                                    (int64_t)position : -(int64_t)position;
+          if ((signed_position >= INT32_MIN) && (signed_position <= INT32_MAX))
+          {
+            motor->position_pulses = (int32_t)signed_position;
+            motor->valid_data |= STEPPER_MOTOR_POSITION_VALID;
+            parsed = true;
+          }
+          break;
+        }
+        case STEPPER_MOTOR_CMD_READ_CURRENT:
+          motor->current_ma = ((uint16_t)motor->rx_frame[2] << 8) |
+                              motor->rx_frame[3];
+          motor->current_sample_id++;
+          parsed = true;
+          break;
+        default:
+          break;
       }
       motor->rx_length = 0U;
     }

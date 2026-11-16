@@ -1,33 +1,49 @@
 {
     "version": "2.0.0",
+    "options": {
+        "env": {
+            "PATH": "C:\\tools\\xpack-openocd-0.12.0-7\\bin;C:\\tools\\xpack-windows-build-tools-4.4.1-3\\bin;C:\\tools\\xpack-arm-none-eabi-gcc-13.2.1-1.1\\bin;${env:PATH}"
+        }
+    },
     "tasks": [
         {
             "label": "Build core_code",
             "type": "shell",
             "command": "make",
+            "args": ["-j8"],
             "options": {
                 "cwd": "${workspaceFolder}/Code_set_Folder/core_code"
             },
-            "group": { 
-                "kind": "build", 
-                "isDefault": true 
+            "group": {
+                "kind": "build",
+                "isDefault": true
             },
             "problemMatcher": ["$gcc"]
         },
         {
-    "label": "Flash core_code",
-    "type": "shell",
-    "command": "openocd",
-    "args": [
-        "-f", "interface/cmsis-dap.cfg",
-        "-f", "target/stm32f4x.cfg",
-        "-c", "program build/core_code.elf verify reset exit"
-    ],
-    "options": {
-        "cwd": "${workspaceFolder}/Code_set_Folder/core_code"
-    },
-    "group": "build",
-    "problemMatcher": []
-}
+            "label": "Clean core_code",
+            "type": "shell",
+            "command": "make",
+            "args": ["clean"],
+            "options": {
+                "cwd": "${workspaceFolder}/Code_set_Folder/core_code"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash core_code",
+            "type": "shell",
+            "command": "openocd",
+            "args": [
+                "-f", "interface/cmsis-dap.cfg",
+                "-f", "target/stm32f4x.cfg",
+                "-c", "program build/core_code.elf verify reset exit"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/Code_set_Folder/core_code"
+            },
+            "group": "build",
+            "problemMatcher": []
+        }
     ]
 }

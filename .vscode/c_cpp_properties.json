@@ -1,0 +1,40 @@
+{
+    "configurations": [
+        {
+            "name": "STM32F407 (arm-none-eabi-gcc)",
+            "includePath": [
+                "${workspaceFolder}/Code_set_Folder/core_code/Core/Inc",
+                "${workspaceFolder}/Code_set_Folder/core_code/Drivers/STM32F4xx_HAL_Driver/Inc",
+                "${workspaceFolder}/Code_set_Folder/core_code/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy",
+                "${workspaceFolder}/Code_set_Folder/core_code/Drivers/CMSIS/Device/ST/STM32F4xx/Include",
+                "${workspaceFolder}/Code_set_Folder/core_code/Drivers/CMSIS/Include",
+                "${workspaceFolder}/Code_set_Folder/core_code/Middlewares/Third_Party/FreeRTOS/Source/include",
+                "${workspaceFolder}/Code_set_Folder/core_code/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2",
+                "${workspaceFolder}/Code_set_Folder/core_code/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F"
+            ],
+            "defines": [
+                "USE_HAL_DRIVER",
+                "STM32F407xx"
+            ],
+            "compilerPath": "C:/tools/xpack-arm-none-eabi-gcc-13.2.1-1.1/bin/arm-none-eabi-gcc.exe",
+            "compilerArgs": [
+                "-mcpu=cortex-m4",
+                "-mthumb",
+                "-mfpu=fpv4-sp-d16",
+                "-mfloat-abi=hard"
+            ],
+            "cStandard": "gnu11",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "gcc-arm",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/Code_set_Folder/core_code/Core",
+                    "${workspaceFolder}/Code_set_Folder/core_code/Drivers",
+                    "${workspaceFolder}/Code_set_Folder/core_code/Middlewares"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}

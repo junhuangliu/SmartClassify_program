@@ -9,6 +9,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "uart1_proto.h"
+#include "uart_echo_test.h"
 #include "corexy.h"
 #include "WaterPump.h"
 #include "cmsis_os2.h"
@@ -200,6 +201,15 @@ static void Uart1Proto_ProcessLine(char *line)
   char *key;
   char *value;
   char *colon;
+
+  /* USER CODE BEGIN ECHO TEST HOOK */
+  /* Temporary bring-up hook: see uart_echo_test.c. Remove this block to restore
+     the original behaviour. */
+  if (UartEchoTest_ProcessLine(line) != 0)
+  {
+    return;
+  }
+  /* USER CODE END ECHO TEST HOOK */
 
   token = strtok(line, " \t");
   if (token == NULL)

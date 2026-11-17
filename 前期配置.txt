@@ -74,3 +74,24 @@ npm -v
 npx opencode@latest
 首次运行会自动下载，稍等片刻即可进入 opencode 的 TUI 界面。
 步骤  C：安装opencode插件
+
+========================================================
+【安装结果 2026-11-09】本机实际安装位置（替代 winget 方案）
+winget 在本机不可用（App Installer 缺失），且 GitHub 被 hosts 屏蔽，
+故改用 xpack 预编译包 + gh-proxy 镜像下载，解压到 C:\tools：
+
+  OpenOCD   : C:\tools\xpack-openocd-0.12.0-7\bin\openocd.exe
+  GCC/GDB   : C:\tools\xpack-arm-none-eabi-gcc-13.2.1-1.1\bin\arm-none-eabi-gcc.exe
+              C:\tools\xpack-arm-none-eabi-gcc-13.2.1-1.1\bin\arm-none-eabi-gdb.exe
+  GNU Make  : C:\tools\xpack-windows-build-tools-4.4.1-3\bin\make.exe
+
+以上三个 bin 目录已加入「用户 PATH」，新开的终端/VS Code 可直接使用
+openocd / make / arm-none-eabi-gdb。
+.vscode\launch.json 已写死 serverpath 与 gdbPath，F5 不依赖 PATH。
+编译验证：在 Code_set_Folder\core_code 执行 make -j8 已成功。
+
+DAP 链路复验（插上无线调试器后执行，看到 Examined Cortex-M 即通）：
+  openocd -f interface/cmsis-dap.cfg -f target/stm32f4x.cfg -c "adapter speed 1000" -c "init; targets; shutdown"
+识别不到设备时显式指定 VID/PID：
+  openocd -f interface/cmsis-dap.cfg -c "cmsis-dap vid_pid 0x04d8 0x00df" -f target/stm32f4x.cfg -c "init; targets; shutdown"
+========================================================

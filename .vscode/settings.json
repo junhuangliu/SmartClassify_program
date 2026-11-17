@@ -1,0 +1,19 @@
+{
+    "files.associations": {
+        "*.ld": "linkerscript",
+        "*.ioc": "ini"
+    },
+    "files.watcherExclude": {
+        "**/Code_set_Folder/core_code/build/**": true
+    },
+    "search.exclude": {
+        "**/Code_set_Folder/core_code/build": true,
+        "**/Code_set_Folder/core_code/Drivers": true,
+        "**/Code_set_Folder/core_code/Middlewares/Third_Party": true
+    },
+    "C_Cpp.intelliSenseEngine": "default",
+    "C_Cpp.errorSquiggles": "enabled",
+    "cortex-debug.openocdPath": "C:/tools/xpack-openocd-0.12.0-7/bin/openocd.exe",
+    "cortex-debug.armToolchainPath": "C:/tools/xpack-arm-none-eabi-gcc-13.2.1-1.1/bin",
+    "cortex-debug.gdbPath": "C:/tools/xpack-arm-none-eabi-gcc-13.2.1-1.1/bin/arm-none-eabi-gdb.exe"
+}

@@ -2,11 +2,14 @@
 #include "ws2812_spi.h"
 #include "cmsis_os2.h"
 #include "uart1_proto.h"
+#include "turntable.h"
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdint.h>
-
+#include "Servo.h"
+#include "WaterPump.h"
+#include "Grab.h"
 #define COREXY_TX_TIMEOUT_US 100000U
 
 
@@ -254,6 +257,7 @@ HAL_StatusTypeDef CoreXY_Init(void)
 /**
  * @brief 移动到绝对坐标。
  * @details 根据当前规划坐标计算相对位移，再由 CoreXY_Move 进行逆解。
+ *          机械 Y 轴方向与坐标定义相反，因此 dy 取反后下发，成功后回写真实目标坐标。
  * @param x 目标 X 坐标，单位 mm。
  * @param y 目标 Y 坐标，单位 mm。
  * @param speed 电机最高速度，单位 RPM。
@@ -264,8 +268,16 @@ HAL_StatusTypeDef CoreXY_MoveTo(float x, float y, uint16_t speed,
                                 uint8_t acceleration)
 {
   float dx = x - corexy_target_x;
-  float dy = y - corexy_target_y;
-  return CoreXY_Move(dx, dy, speed, acceleration);
+  /* 机械 Y 轴转动方向与坐标定义相反：dy 取反后再做 CoreXY 逆解 */
+  float dy = corexy_target_y - y;
+  HAL_StatusTypeDef status = CoreXY_Move(dx, dy, speed, acceleration);
+
+  if (status == HAL_OK)
+  {
+    /* CoreXY_Move 累加的是传入的 dy，这里回写真实目标，保持 Y 坐标语义不变 */
+    corexy_target_y = y;
+  }
+  return status;
 }
 
 /**
@@ -281,6 +293,28 @@ HAL_StatusTypeDef CoreXY_MoveRelative(float dx, float dy, uint16_t speed,
                                       uint8_t acceleration)
 {
   return CoreXY_Move(dx, dy, speed, acceleration);
+}
+
+/**
+ * @brief 读取 CoreXY 当前规划坐标 X。
+ * @details 直接返回 CoreXY_MoveTo 内部跟踪的坐标，模块外部不需要再单独保存一份，
+ *          读取本身无副作用，可在任务上下文或运动过程中调用。
+ * @retval 当前 X 坐标，单位 mm。
+ */
+float CoreXY_GetPositionX(void)
+{
+  return corexy_target_x;
+}
+
+/**
+ * @brief 读取 CoreXY 当前规划坐标 Y。
+ * @details 与 CoreXY_GetPositionX 配套；注意内部 Y 坐标已按机械方向做过取反处理，
+ *          返回的是对外的物理坐标，可直接与 CoreXY_MoveTo 的入参比较。
+ * @retval 当前 Y 坐标，单位 mm。
+ */
+float CoreXY_GetPositionY(void)
+{
+  return corexy_target_y;
 }
 
 /**
@@ -343,7 +377,7 @@ static void CoreXY_ReportMotorRxDiagnostic(const StepperMotor_t *motor,
  * @brief 以速度模式持续驱动两轴，并通过电流增量完成 CoreXY 碰撞回零。
  * @details 两轴依次沿负方向持续运动，不依赖位置查询或分段到位判断；任一电机电流相对
  *          运动基线连续超过阈值即停止两台电机。超时使用 TIM5 微秒计数，与 SysTick 分离。
- *          异常出口按原因显示 WS2812 颜色，正常结束熄灯。
+ *          回零过程不操作 WS2812，灯带状态由其它模块负责。
  * @retval HAL_OK 两轴回零成功；其他状态表示初始化、通信或运动超时/失败。
  */
 HAL_StatusTypeDef CoreXY_MoveOrigin(void)
@@ -576,69 +610,64 @@ cleanup:
   switch (exit_reason)
   {
     case EXIT_REASON_INIT:
-      WS2812_SetAll(255U, 0U, 0U);
       corexy_origin_error_message = "ERR ORIGIN: init failed\r\n";
       break;
     case EXIT_REASON_MOVE_COMMAND:
-      WS2812_SetAll(255U, 255U, 255U);
       corexy_origin_error_message = "ERR ORIGIN: motor command failed\r\n";
       break;
     case EXIT_REASON_FEEDBACK_COMMAND:
-      WS2812_SetAll(255U, 255U, 255U);
       corexy_origin_error_message = "ERR ORIGIN: current query failed\r\n";
       break;
     case EXIT_REASON_FEEDBACK_TIMEOUT:
-      WS2812_SetAll(255U, 255U, 255U);//
       if (corexy_origin_error_message == NULL)
       {
         corexy_origin_error_message = "ERR ORIGIN: current feedback timeout\r\n";
       }
       break;
-    case EXIT_REASON_MOTION_TIMEOUT://
-      WS2812_SetAll(255U, 255U, 255U);
+    case EXIT_REASON_MOTION_TIMEOUT:
       corexy_origin_error_message = "ERR ORIGIN: current threshold not reached\r\n";
       break;
     case EXIT_REASON_NORMAL:
     default:
-      WS2812_SetAll(0U, 0U, 0U);
       break;
-  }
-  if (WS2812_Show() != HAL_OK && status == HAL_OK)
-  {
-    status = HAL_ERROR;
-    corexy_origin_error_message = "ERR ORIGIN: WS2812 update failed\r\n";
   }
   return status;
   /************AICodeEnd************/
 }
- /************AICodeBegin1************/
+  /************AICodeBegin1************/
 /**
- * @brief 仅使用 USART2 电机电流反馈完成 CoreXY 两轴回零。
+ * @brief 仅用 USART2 反馈完成 CoreXY 两轴回零：沿 -Y 压到底（回退 15mm 已临时禁用）、再沿 -X 压到底。
+ *
  * @details
- * - 设计意图：在 USART3 电流反馈不可用时，以 USART2 对应的电机 B 电流变化判定回零。
- * - 实现要点：先沿 X 方向运动；仅当 USART2 电流连续达到阈值并停下两台电机后，
- *   才进入纯 Y 方向运动。每次仅查询电机 B 的电流，完成后清零该轴及驱动器位置。
- * - 注意事项：在 FreeRTOS 任务上下文调用；本函数独立于 CoreXY_MoveOrigin，
- *   不会自动替换现有任务中的回零调用。
- * @retval HAL_OK 两轴回零成功；其他状态表示命令、反馈或运动超时/失败。
+ * - 设计意图：USART3 侧电流反馈不可用，只能用 USART2 对应电机 B 的相电流增量判断是否
+ *   撞到硬限位；运动统一交给 CoreXY_MoveTo（位置模式），本函数只负责发目标点、轮询电流、
+ *   判定后停两台电机并把该轴坐标归零。
+ * - 实现要点：
+ *   1) axis 0（Y 轴）：CoreXY_MoveTo(0, -10000) 走到底，电流增量连续 2 次超阈值即停两台
+ *      电机并清零驱动器位置；原逻辑随后 CoreXY_MoveTo(0, 15) 回退 15mm 脱开限位、等 1.5s
+ *      稳定，现已临时注释掉（取消注释即可恢复），Y 原点直接取撞停点。
+ *   2) axis 1（X 轴）：CoreXY_MoveTo(-10000, 0) 走到底，判定逻辑与 Y 轴完全一致，仅阈值
+ *      不同 —— Y 轴带动整个横梁负载更重（threshold_y_ma），X 轴较轻（threshold_x_ma）。
+ * - 数据流：CoreXY_MoveTo 产生两路脉冲 -> StepperMotor_ReadCurrent 轮询电机 B 相电流 ->
+ *   current_ma / current_sample_id -> 与运动基线比较 -> 判定撞停。
+ * - 注意事项：阻塞执行，只能在 FreeRTOS 任务上下文调用（内部 osDelay）；首次采样只取基线
+ *   不参与判定，避免启动瞬间误触发；单轴 20s 超时，任何失败都先停两台电机再返回。
+ * @retval HAL_OK 两轴回零成功，corexy_target_x/y 均已归零。
+ * @retval HAL_TIMEOUT 电流应答超时或未检测到撞停（已停机）。
+ * @retval HAL_ERROR 初始化失败或命令下发失败（已停机）。
  */
 HAL_StatusTypeDef CoreXY_MoveOriginUSART2(void)
 {
-  const uint16_t threshold = 400U;
-  const uint8_t required_samples = 3U;
-  const uint16_t home_speed_rpm = 30U;
-  const uint8_t home_acceleration = 20U;
+  /* 电流阈值变量：现场调试时只改这两个值即可，单位 mA，指相对运动基线的增量 */
+  uint16_t threshold_y_ma = 400U; /* Y 轴：带动整个横梁，负载重，阈值大 */
+  uint16_t threshold_x_ma = 250U; /* X 轴：负载轻，阈值小 */
+  const uint8_t required_samples = 2U;
   const uint32_t poll_ms = 20U;
   const uint32_t reply_timeout_ms = 100U;
   const uint32_t axis_timeout_ms = 20000U;
   const uint32_t command_gap_ms = 5U;
   StepperMotor_t *motors[2] = {&stepper_motor_a1, &stepper_motor_b1};
   StepperMotor_t *feedback_motor = &stepper_motor_b1;
-  const uint8_t invert[2] =
-  {
-    COREXY_MOTOR_A_INVERT_DIRECTION,
-    COREXY_MOTOR_B_INVERT_DIRECTION
-  };
   HAL_StatusTypeDef status = HAL_OK;
   bool motion_active = false;
   uint8_t axis;
@@ -647,66 +676,34 @@ HAL_StatusTypeDef CoreXY_MoveOriginUSART2(void)
   corexy_origin_error_message = NULL;
   if ((corexy_state == COREXY_STATE_INIT_FAIL) || (required_samples == 0U))
   {
-    status = HAL_ERROR;
     corexy_origin_error_message = "ERR ORIGIN: init failed\r\n";
-    WS2812_SetAll(255U, 0U, 0U);
     goto cleanup;
   }
 
   for (axis = 0U; axis < 2U; ++axis)
   {
+    /* 按当前轴取对应阈值变量：axis 0 为 Y 轴，axis 1 为 X 轴 */
+    uint16_t threshold = (axis == 0U) ? threshold_y_ma : threshold_x_ma;
     uint16_t baseline_current = 0U;
     uint8_t over_threshold = 0U;
     bool baseline_ready = false;
     bool stalled = false;
-    /* axis 0 先回 X；只有 X 电流确认并停机后才进入 axis 1 的纯 Y 运动。 */
-    float dx = (axis == 0U) ? -1.0f : 0.0f;
-    float dy = (axis == 1U) ? -1.0f : 0.0f;
-    float belt_move[2] = {dx + dy, dx - dy};
-    uint8_t direction[2];
     uint32_t axis_start_us;
 
     for (i = 0U; i < 2U; ++i)
     {
       Emm_V5_Reset_Clog_Pro(motors[i]->huart);
       osDelay(command_gap_ms);
-      direction[i] = (uint8_t)((belt_move[i] < 0.0f) ^
-                               (invert[i] != 0U));
     }
 
+    /* 位置模式给足行程，撞限位由电流增量判定 */
     motion_active = true;
-    for (i = 0U; i < 2U; ++i)
+    status = (axis == 0U) ? CoreXY_MoveTo(0.0f, -10000.0f, 70U, 20U) :
+                            CoreXY_MoveTo(-10000.0f, 0.0f, 70U, 20U);
+    if (status != HAL_OK)
     {
-      status = StepperMotor_SetSpeed(motors[i], direction[i], home_speed_rpm,
-                                     home_acceleration, true);
-      if (status != HAL_OK)
-      {
-        corexy_origin_error_message = "ERR ORIGIN: motor command failed\r\n";
-        WS2812_SetAll(255U, 255U, 255U);
-        goto cleanup;
-      }
-    }
-
-    for (i = 0U; i < 2U; ++i)
-    {
-      status = Emm_V5_Synchronous_motion(motors[i]->huart);
-      if (status != HAL_OK)
-      {
-        corexy_origin_error_message = "ERR ORIGIN: motor command failed\r\n";
-        WS2812_SetAll(255U, 255U, 255U);
-        goto cleanup;
-      }
-    }
-
-    for (i = 0U; i < 2U; ++i)
-    {
-      status = CoreXY_WaitTx(motors[i]);
-      if (status != HAL_OK)
-      {
-        corexy_origin_error_message = "ERR ORIGIN: motor command failed\r\n";
-        WS2812_SetAll(255U, 255U, 255U);
-        goto cleanup;
-      }
+      corexy_origin_error_message = "ERR ORIGIN: motor command failed\r\n";
+      goto cleanup;
     }
 
     axis_start_us = CoreXY_TimeNowUs();
@@ -719,7 +716,6 @@ HAL_StatusTypeDef CoreXY_MoveOriginUSART2(void)
       if (status != HAL_OK)
       {
         corexy_origin_error_message = "ERR ORIGIN: current query failed\r\n";
-        WS2812_SetAll(255U, 255U, 255U);
         goto cleanup;
       }
 
@@ -732,7 +728,6 @@ HAL_StatusTypeDef CoreXY_MoveOriginUSART2(void)
           corexy_origin_error_message =
               "ERR ORIGIN: no current reply from motor B (USART2)\r\n";
           CoreXY_ReportMotorRxDiagnostic(feedback_motor, "B", "USART2");
-          WS2812_SetAll(255U, 255U, 255U);
           goto cleanup;
         }
         osDelay(1U);
@@ -763,7 +758,6 @@ HAL_StatusTypeDef CoreXY_MoveOriginUSART2(void)
         status = HAL_TIMEOUT;
         corexy_origin_error_message =
             "ERR ORIGIN: current threshold not reached\r\n";
-        WS2812_SetAll(255U, 255U, 255U);
         goto cleanup;
       }
       if (!stalled)
@@ -772,6 +766,7 @@ HAL_StatusTypeDef CoreXY_MoveOriginUSART2(void)
       }
     }
 
+    /* 撞停即停两台电机，再解除堵转保护并清零驱动器位置，绝对坐标才能继续使用 */
     CoreXY_StopAll();
     motion_active = false;
     for (i = 0U; i < 2U; ++i)
@@ -782,27 +777,33 @@ HAL_StatusTypeDef CoreXY_MoveOriginUSART2(void)
       osDelay(command_gap_ms);
       motors[i]->position_pulses = 0;
     }
+
     if (axis == 0U)
     {
-      corexy_target_x = 0.0f;
+      /* 撞停点即 Y 原点；回退 15mm 脱开硬限位，避免后续 X 运动被限位卡住 */
+      corexy_target_y = 0.0f;
+      
+      status = CoreXY_MoveTo(0.0f, 15.0f, 30U, 20U);
+      if (status != HAL_OK)
+      {
+        corexy_origin_error_message = "ERR ORIGIN: motor command failed\r\n";
+        goto cleanup;
+      }
+      osDelay(1500U);
+      
+      /* 回退后的位置重新记为 Y 原点，保证下一步是纯 X 运动 */
+      corexy_target_y = 0.0f;
     }
     else
     {
-      corexy_target_y = 0.0f;
+      corexy_target_x = 0.0f;
     }
   }
-
-  WS2812_SetAll(0U, 0U, 0U);
 
 cleanup:
   if (motion_active)
   {
     CoreXY_StopAll();
-  }
-  if ((WS2812_Show() != HAL_OK) && (status == HAL_OK))
-  {
-    status = HAL_ERROR;
-    corexy_origin_error_message = "ERR ORIGIN: WS2812 update failed\r\n";
   }
   return status;
 }
@@ -811,19 +812,24 @@ cleanup:
  * @brief CoreXY 电机任务入口。
  * @details
  * - 设计意图：为 CoreXY 电机控制保留独立 FreeRTOS 任务入口。
- * - 实现要点：上电先做一次碰撞回零（先 X 后 Y）；失败时在 UART1 报告具体原因，
+ * - 实现要点：上电先做一次碰撞回零（先 Y 后 X）；失败时在 UART1 报告具体原因，
  *   不自动重试，避免反复顶限位；之后进入 1s 周期的空循环，等待后续命令接入。
  * - 注意事项：回零是阻塞调用（两轴各有 20s 安全超时），期间本任务不处理其它请求。
  * @param argument 未使用。
  */
 void CoreXYTask(void *argument)
 {
+  
+#if 0
+Grab_To_Zero();
+osDelay(1000U);
   HAL_StatusTypeDef origin_status;
 
   (void)argument;
 
-  /* 上电碰撞回零一次（先 X 后 Y）；失败只报一行，不自动重试，避免反复顶限位 */
 
+  /* 上电用 USART2 单侧电流反馈回零一次（先 Y 后 X）；
+     失败只报一行，不自动重试，避免反复顶限位 */
   origin_status = CoreXY_MoveOriginUSART2();
   if (origin_status != HAL_OK)
   {
@@ -832,9 +838,31 @@ void CoreXYTask(void *argument)
                     "ERR ORIGIN: unknown failure\r\n");
   }
 
+#endif
+
+
+
+///CoreXY_MoveTo(X1, Y1, 100U, 50U);//（95 255盘子坐标）  25    Y轴（0-260）  X轴（0-190 水泵不在摄像头一侧） 
+
+//WaterPump_Stop();
+
+//Grab_Begin();
+//Grab_XY(100, 0, Destination_X, Destination_Y);
+///StepperMotor_SetSpeed(&stepper_motor_b2, 0, 100,10, false);
+//osDelay(1000U);
+//StepperMotor_Stop(&stepper_motor_b2);
+
+  /* 上电自检：抓取电机以 200RPM 正转 5s 后停机并把当前位置记为 0；
+     内部用 osDelay，只挂起本任务，不会像 HAL_Delay 那样卡住整个系统 */
+  
+//Grab_Begin();
+//osDelay(1000U);
+//Grab_End();
   for (;;)
   {
-    osDelay(1000U);
+    //Servo_SetAngle(0);
+    osDelay(5000U);
+    //Servo_SetAngle(50);
   }
 }
 

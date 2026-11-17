@@ -1,26 +1,29 @@
 #include "WaterPump.h"
 
 /**
- * @brief 初始化水泵/阀门 PWM 输出，并保证上电时为关闭状态
+ * @brief 初始化水泵/阀门 PWM 输出（50Hz），并保证上电时为关闭状态
  *
  * @details 详细思路：
- * - 设计意图：把 TIM4 两路 PWM 通道（阀门 CH2、水泵 CH1）置零启动，
- *   避免上电瞬间因比较值为随机/默认值导致阀门或水泵误动作
- * - 实现要点：先启动计数器，再分别启动两路 PWM，最后把两路比较值写 0
- * - 数据流：直接操作 htim4 的比较寄存器占空比，无返回值
- * - 注意事项：必须在 MX_TIM4_Init 完成（含 MSP 的 GPIO 复用配置）之后调用
+ * - 设计意图：TIM4 由水泵 CH1、阀门 CH2、舵机 CH4 共用，时基统一在这里配置成 50Hz，
+ *   其它模块不再重复改 PSC/ARR；先把比较值清 0 再开输出，避免上电瞬间误动作
+ * - 实现要点：写 PSC/ARR 后必须产生更新事件让分频立即生效（PSC 带缓冲），
+ *   然后清 CCR1/CCR2，再启动两路 PWM（HAL_TIM_PWM_Start 会同时使能计数器）
+ * - 数据流：PSC/ARR -> 20ms 周期；CCR1/CCR2 -> 水泵/阀门占空比
+ * - 注意事项：必须在 MX_TIM4_Init 之后、Servo_Init 之前调用
  *
  * @param 无
  * @retval 无
  */
 void WaterPump_Init(void){
+/* 50Hz 时基只配置这一次：1MHz 计数 + 20000 计数 = 20ms 周期 */
+__HAL_TIM_SET_PRESCALER(&htim4, PUMP_PWM_PRESCALER);
+__HAL_TIM_SET_AUTORELOAD(&htim4, PUMP_PWM_PERIOD);
+htim4.Instance->EGR = TIM_EGR_UG;
 
-HAL_TIM_Base_Start(&htim4);
+__HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, 0);
+__HAL_TIM_SET_COMPARE(&htim4, VALVE_CH, 0);
 HAL_TIM_PWM_Start(&htim4, PUMP_CH);
 HAL_TIM_PWM_Start(&htim4, VALVE_CH);
-__HAL_TIM_SET_COMPARE(&htim4, VALVE_CH, 0);
-__HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, 0);
-
 
 }
 
@@ -29,7 +32,7 @@ __HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, 0);
  *
  * @details 详细思路：
  * - 设计意图：先建立通路再启泵，防止先启泵憋压
- * - 实现要点：阀门占空比拉到 VALVE_DUTY_ON，延时 100ms 等阀门到位后再以 PUMP_DUTY_ON 启泵
+ * - 实现要点：阀门占空比拉到 WATER_PUMP_DUTY_CCR，延时 100ms 等阀门到位后再以同一占空比启泵
  * - 注意事项：内部使用 osDelay，只能在 FreeRTOS 任务上下文调用，不能在中断里调用
  *
  * @param 无
@@ -38,7 +41,7 @@ __HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, 0);
 void WaterPump_Start(void){
 __HAL_TIM_SET_COMPARE(&htim4, VALVE_CH, 0);
 osDelay(200);
-__HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, PUMP_DUTY_ON);
+__HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, WATER_PUMP_DUTY_CCR);
 }
 
 /**
@@ -55,7 +58,7 @@ __HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, PUMP_DUTY_ON);
 void WaterPump_Stop(void){
 __HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, 0);
 osDelay(100);
-__HAL_TIM_SET_COMPARE(&htim4, VALVE_CH, VALVE_DUTY_ON);
+__HAL_TIM_SET_COMPARE(&htim4, VALVE_CH, WATER_PUMP_DUTY_CCR);
 osDelay(100);
 __HAL_TIM_SET_COMPARE(&htim4, VALVE_CH, 0);
 

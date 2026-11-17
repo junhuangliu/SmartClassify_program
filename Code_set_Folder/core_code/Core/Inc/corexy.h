@@ -53,6 +53,21 @@ HAL_StatusTypeDef CoreXY_MoveRelative(float dx, float dy, uint16_t speed,
                                       uint8_t acceleration);
 
 /**
+ * @brief 读取 CoreXY 当前规划坐标 X。
+ * @details 返回 CoreXY_MoveTo 内部跟踪的当前位置（最近一次成功下发的目标坐标），
+ *          供其它模块按行程计算等待时间等用途，避免各自另存一份坐标。
+ * @retval 当前 X 坐标，单位 mm。
+ */
+float CoreXY_GetPositionX(void);
+
+/**
+ * @brief 读取 CoreXY 当前规划坐标 Y。
+ * @details 与 CoreXY_GetPositionX 配套使用。
+ * @retval 当前 Y 坐标，单位 mm。
+ */
+float CoreXY_GetPositionY(void);
+
+/**
  * @brief 碰撞回零：X、Y 两轴依次压到机械硬限位，把该位置设为坐标原点 (0,0)。
  *
  * @details
@@ -67,6 +82,22 @@ HAL_StatusTypeDef CoreXY_MoveRelative(float dx, float dy, uint16_t speed,
  * @retval HAL_ERROR   速度命令下发失败，或电机未动作（多半是驱动器回 E2 拒绝执行）
  */
 HAL_StatusTypeDef CoreXY_MoveOrigin(void);
+
+/**
+ * @brief 仅使用 USART2 电流反馈完成两轴回零：先 Y 后 X，撞限位即停。
+ *
+ * @details
+ * - Y 轴：CoreXY_MoveTo(0, -10000) 压到底 → 电流增量超阈值（400mA）停两台电机 →
+ *   CoreXY_MoveTo(0, 15) 回退并等 1.5s；
+ * - X 轴：CoreXY_MoveTo(-10000, 0) 压到底，判定逻辑相同，阈值 200mA；
+ * - 只在 FreeRTOS 任务上下文调用，阻塞执行，单轴 20s 安全超时。
+ *
+ * @param 无
+ * @retval HAL_OK 两轴回零成功，corexy_target_x/y 均已归零
+ * @retval HAL_TIMEOUT 电流应答超时或未检测到撞停（已停机）
+ * @retval HAL_ERROR 初始化失败或运动命令下发失败（已停机）
+ */
+HAL_StatusTypeDef CoreXY_MoveOriginUSART2(void);
 
 /**
  * @brief CoreXY 电机任务入口。

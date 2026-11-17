@@ -158,11 +158,13 @@ void Uart1RxTask(void *argument)
 void WS2812Task(void *argument)
 {
   (void)argument;
+  #if 0
 WS2812_SetAll(255, 255, 255);
 WS2812_Show();
+#endif
   /* 七色彩虹调色板（GRB 顺序） */
-  /****AIBEGIN */
-#if 0
+ /* 颜色顺序：红橙黄绿青蓝紫 */
+
   static const uint8_t rainbow[7][3] = {
       {0, 255, 0},       /* 红   G=0, R=255, B=0 */
       {127, 255, 0},     /* 橙   G=127, R=255, B=0 */
@@ -277,8 +279,8 @@ WS2812_Show();
       running_rainbow = 1;
     }
   }
-#endif
-  /****AIEND */
+
+  
   for (;;)
   {
     osDelay(1000U);
@@ -306,19 +308,27 @@ void PA10BlinkTask(void *argument)
 }
 
 /**
- * @brief 水泵任务入口，供后续添加水泵控制逻辑。
+ * @brief 水泵任务入口，供后续添加水泵控制逻辑
  *
- * @details 保留独立的 FreeRTOS 任务循环，不与 CoreXY 电机任务联动。
+ * @details 详细思路：
+ * - 设计意图：保留独立的水泵任务循环，不与 CoreXY 电机任务联动
+ * - 实现要点：占位阶段每轮 osDelay(100) 主动让出 CPU，绝不能写空转死循环
+ * - 注意事项：本任务优先级为 osPriorityNormal(24)。若循环体不阻塞，它永远处于就绪态，
+ *   抢占式调度下所有低优先级任务（如 osPriorityBelowNormal(16) 的 ServoTask）将永远拿不到时间片，
+ *   表现为舵机等低优先级任务完全不执行；同时空闲任务也跑不到，CPU 占用 100%
+ * - 调用关系：仅由 main.c 的 osThreadNew 创建，运行在任务上下文
  *
- * @param argument 未使用。
+ * @param argument 未使用
+ * @retval 无（任务不返回）
  */
 void WaterPumpTask(void *argument)
 {
   (void)argument;
   for (;;)
   {
-
+    osDelay(100U);
   }
 }
 
 /* USER CODE END Application */
+

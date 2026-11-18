@@ -12,4 +12,14 @@
  */
 HAL_StatusTypeDef TurnTable_Init(void);
 void TurnTable_Set(uint8_t Table);
+
+/**
+ * @brief 转台任务入口，当前为占位实现，循环 osDelay 让出 CPU。
+ * @details 与 ServoTask 同为 osPriorityBelowNormal，按时间片轮转共享 CPU；
+ *          后续转台命令接入后在此任务上下文执行阻塞动作。
+ * @param argument 未使用。
+ * @retval 无（任务不返回）。
+ */
+void TurnTableTask(void *argument);
+extern uint8_t Turn_Flag;
 #endif

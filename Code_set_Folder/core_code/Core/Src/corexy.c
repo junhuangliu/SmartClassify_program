@@ -820,7 +820,7 @@ cleanup:
 void CoreXYTask(void *argument)
 {
   
-#if 0
+
 Grab_To_Zero();
 osDelay(1000U);
   HAL_StatusTypeDef origin_status;
@@ -838,16 +838,16 @@ osDelay(1000U);
                     "ERR ORIGIN: unknown failure\r\n");
   }
 
-#endif
 
 
 
-///CoreXY_MoveTo(X1, Y1, 100U, 50U);//（95 255盘子坐标）  25    Y轴（0-260）  X轴（0-190 水泵不在摄像头一侧） 
+
+//CoreXY_MoveTo(Destination_X, Destination_Y, 100U, 50U);//（95 255盘子坐标）  25    Y轴（0-260）  X轴（0-190 水泵不在摄像头一侧） 
 
 //WaterPump_Stop();
 
 //Grab_Begin();
-//Grab_XY(100, 0, Destination_X, Destination_Y);
+Grab_XY(120,30 , Destination_X, Destination_Y);
 ///StepperMotor_SetSpeed(&stepper_motor_b2, 0, 100,10, false);
 //osDelay(1000U);
 //StepperMotor_Stop(&stepper_motor_b2);
@@ -860,9 +860,9 @@ osDelay(1000U);
 //Grab_End();
   for (;;)
   {
-    //Servo_SetAngle(0);
+   
     osDelay(5000U);
-    //Servo_SetAngle(50);
+   
   }
 }
 

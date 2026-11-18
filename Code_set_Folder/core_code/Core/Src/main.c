@@ -231,6 +231,8 @@ int main(void)
   };
   osThreadNew(WaterPumpTask, NULL, &waterPumpTask_attributes);
 
+  /* CoreXY 是主动作任务：保持 Normal(24)，比舵机/转台的 BelowNormal(16) 高一级，
+     两者都就绪时 CoreXY 优先拿到时间片，运动控制不会被灯光/舵机等挤占 */
   const osThreadAttr_t corexyTask_attributes = {
     .name = "CoreXYTask",
     .stack_size = 512 * 4,
@@ -246,6 +248,23 @@ int main(void)
     .priority = (osPriority_t) osPriorityBelowNormal,
   };
   osThreadNew(ServoTask, NULL, &servoTask_attributes);
+
+  /* 转台与舵机同优先级：两者按时间片轮转、平分正常优先级之外的剩余 CPU；
+     任务体必须阻塞（osDelay），否则会互相饿死 */
+  const osThreadAttr_t turnTableTask_attributes = {
+    .name = "TurnTableTask",
+    .stack_size = 128 * 4,
+    .priority = (osPriority_t) osPriorityBelowNormal,
+  };
+  osThreadNew(TurnTableTask, NULL, &turnTableTask_attributes);
+
+  /* 抓取任务与舵机/转台同优先级，平分正常优先级之外的剩余 CPU */
+  const osThreadAttr_t grabTask_attributes = {
+    .name = "GrabTask",
+    .stack_size = 128 * 4,
+    .priority = (osPriority_t) osPriorityBelowNormal,
+  };
+  osThreadNew(GrabTask, NULL, &grabTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

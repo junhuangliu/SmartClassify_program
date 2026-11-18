@@ -9,9 +9,10 @@
 #include "Servo.h"
 #include "WaterPump.h"
 #include "Grab.h"
-
+extern uint8_t Servo_Flag1;
+extern uint8_t Servo_Angle1;
 extern float duty;
 void Servo_Init(void);
-void Servo_SetAngle(float Angle);
+void Servo_SetAngle(float Angle, uint32_t CHANNEL);
 void ServoTask(void *argument);
 #endif

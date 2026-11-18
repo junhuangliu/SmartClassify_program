@@ -1,8 +1,9 @@
 #include "TurnTable.h"
 #include "main.h"
-
+#include "cmsis_os2.h"
+#include <math.h>
 extern UART_HandleTypeDef huart5;
-
+uint8_t Turn_Flag;
 static uint8_t CurTable=0;
 
 /**
@@ -27,19 +28,71 @@ if(Table>5){
 else if(Table==CurTable){
   return ;
 }
-
-else if(Table>CurTable){
+/* 必须用有符号类型：uint8_t 相减回绕成 251~255，dis<0 分支永远进不去 */
+int8_t dis=Table-CurTable;
+int8_t absdis=fabs(Table-CurTable);
+ if(dis>0 && absdis<=3){
  
-StepperMotor_SetPosition(&stepper_motor_b2, 1, 300, 20,(Table-CurTable)*533.333, true, false);
+StepperMotor_SetPosition(&stepper_motor_b2, 1, 300, 20,absdis*533.333, true, false);
 
 
 }
-else if(Table<CurTable){
-StepperMotor_SetPosition(&stepper_motor_b2, 0, 300, 20,(CurTable-Table)*533.333, true, false);
+else if(dis>0 && absdis>3){
+StepperMotor_SetPosition(&stepper_motor_b2, 0, 300, 20,(6-absdis)*533.333, true, false);
+
+}
+else if(dis<0 && absdis<=3){
+ 
+StepperMotor_SetPosition(&stepper_motor_b2, 0, 300, 20,absdis*533.333, true, false);
+
+
+}else if(dis<0 && absdis>3){
+ 
+StepperMotor_SetPosition(&stepper_motor_b2, 1, 300, 20,(6-absdis)*533.333, true, false);
+
 
 }
 CurTable=Table;
 
+}
+
+/**
+ * @brief 转台任务入口（当前为占位实现，等待后续接入转台动作逻辑）
+ *
+ * @details 详细思路：
+ * - 设计意图：给转台模块保留独立任务，后续把 TurnTable_Set 等阻塞动作放到这里执行，
+ *   避免在 UART 解析等上下文里直接调用阻塞接口
+ * - 实现要点：占位阶段每轮 osDelay(100) 主动让出 CPU，绝不能写空转死循环；
+ *   否则它永远处于就绪态，会饿死同优先级任务
+ * - 注意事项：优先级与 ServoTask 相同（osPriorityBelowNormal(16)），
+ *   同优先级任务按 FreeRTOS 时间片（1 个 tick）轮转，因此本循环必须阻塞
+ * - 调用关系：仅由 main.c 的 osThreadNew 创建，运行在任务上下文
+ *
+ * @param argument 未使用
+ * @retval 无（任务不返回）
+ */
+void TurnTableTask(void *argument)
+{
+  uint8_t i=0;
+  (void)argument;
+  for (;;)
+  {
+    /************电机测试 */
+    #if 0
+    TurnTable_Set(i);
+    osDelay(2000U);
+    i++;
+    if(i>5){
+      i=0;
+    }
+    #endif
+if(Turn_Flag==1){
+Turn_Flag==0;
+TurnTable_Set(i);
+
+}
+ osDelay(50);
+  }
 }
 
 /**

@@ -63,7 +63,7 @@ Core/Src/Emm_V5.c \
 Core/Src/stepper_motor.c \
 Core/Src/Grab.c \
 Core/Src/TurnTable.c \
-Core/Src/Servo.c \
+Core/Src/servo.c \
 Core/Src/corexy.c \
 Core/Src/ws2812_spi.c \
 Core/Src/WaterPump.c \

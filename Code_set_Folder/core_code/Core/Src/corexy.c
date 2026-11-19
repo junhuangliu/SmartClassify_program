@@ -847,7 +847,7 @@ osDelay(1000U);
 //WaterPump_Stop();
 
 //Grab_Begin();
-Grab_XY(120,30 , Destination_X, Destination_Y);
+Grab_XY(120,30 , (uint16_t)(Destination_X - 6U), (uint16_t)(Destination_Y + 6U));
 ///StepperMotor_SetSpeed(&stepper_motor_b2, 0, 100,10, false);
 //osDelay(1000U);
 //StepperMotor_Stop(&stepper_motor_b2);

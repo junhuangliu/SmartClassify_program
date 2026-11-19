@@ -1,4 +1,5 @@
 #include "Grab.h"
+#include "servo.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -6,9 +7,65 @@
 #define GRAB_BELT_MM_PER_REV \
   (COREXY_BELT_TOOTH_PITCH_MM * COREXY_PULLEY_TEETH)
 
+/* 舵机1 抓取行程：下降 5 齿，吸住后回升 5 齿（Servo1_MoveTeeth 内部按 167us/齿换算） */
+#define GRAB_SERVO1_TEETH         5
+/* 与 Servo1_MoveTeeth 内部的 SERVO1_MOVE_SETTLE_MS 保持一致，用于和电机动作并行计时 */
+#define GRAB_SERVO1_MOVE_MS       1500U
+/* 舵机到位后再多等一会儿，确保完全到抓取高度后才开泵 */
+#define GRAB_SUCTION_DELAY_MS     300U
+
+/* 抓取电机单次动作时间：抓取段下降行程需要更深，比上升多走 550ms */
+#define GRAB_MOTOR_DOWN_MS        5100U
+#define GRAB_MOTOR_UP_MS          4250U
+/* 等待余量：GrabTask 动作结束后再多等 50ms 确保停稳 */
+#define GRAB_MOTOR_WAIT_MARGIN_MS 50U
+
 
 uint8_t Grab_MotorBeginFlag=0;
 uint8_t Grab_MotorEndFlag=0;
+
+/**
+ * @brief 触发抓取电机下降到抓取位并等待动作完成
+ *
+ * @details
+ * - 设计意图：CoreXYTask 只负责时序，实际电机命令由 GrabTask 轮询标志位执行
+ * - 实现要点：置 Grab_MotorBeginFlag 后等待 GRAB_MOTOR_DOWN_MS 加余量，确保 GrabTask 完成动作
+ * - 注意事项：内部 osDelay 只能在任务上下文调用；等待期间其它任务正常运行
+ *
+ * @param 无
+ * @retval 无
+ */
+static void Grab_MotorDown(void)
+{
+   Grab_MotorBeginFlag = 1U;
+   osDelay(GRAB_MOTOR_DOWN_MS + GRAB_MOTOR_WAIT_MARGIN_MS);
+}
+
+/**
+ * @brief 舵机1 下降指定齿数（抓取段）
+ *
+ * @details 直接复用 Servo1_MoveTeeth 的齿数换算，负齿数为下降
+ *
+ * @param 无
+ * @retval 无
+ */
+static void Grab_ServoDown(void)
+{
+   Servo1_MoveTeeth(-GRAB_SERVO1_TEETH);
+}
+
+/**
+ * @brief 舵机1 回升指定齿数（吸取后）
+ *
+ * @details 与下降齿数对称，用负齿数把舵机转回原位
+ *
+ * @param 无
+ * @retval 无
+ */
+static void Grab_ServoUp(void)
+{
+   Servo1_MoveTeeth(GRAB_SERVO1_TEETH);
+}
 
 
 
@@ -92,23 +149,23 @@ void GrabTask(void *argument)
      /* 速度命令可能已经发出去了（只是等待发送完成超时），这里补一次停机，
         避免函数提前返回后电机一直自转 */
      StepperMotor_Stop(&stepper_motor_a2);
-     return;
-   }
-   osDelay(4250);
-  StepperMotor_Stop(&stepper_motor_a2);
+      return;
     }
-    if(Grab_MotorEndFlag==1){
+    osDelay(GRAB_MOTOR_DOWN_MS);
+   StepperMotor_Stop(&stepper_motor_a2);
+     }
+     if(Grab_MotorEndFlag==1){
       Grab_MotorEndFlag=0;
        if(StepperMotor_SetSpeed(&stepper_motor_a2, 1, 200,50, false) != HAL_OK)
    {
      /* 速度命令可能已经发出去了（只是等待发送完成超时），这里补一次停机，
         避免函数提前返回后电机一直自转 */
      StepperMotor_Stop(&stepper_motor_a2);
-     return;
-   }
-   osDelay(4250);
-  StepperMotor_Stop(&stepper_motor_a2);
+      return;
     }
+    osDelay(GRAB_MOTOR_UP_MS);
+   StepperMotor_Stop(&stepper_motor_a2);
+     }
 
     osDelay(10U);
   }
@@ -164,6 +221,28 @@ void Grab_End()
    WaterPump_Stop();
 
    }
+/**
+ * @brief 完成一次「抓取 + 放置」完整动作
+ *
+ * @details
+ * - 设计意图：把取物点和放置点的动作串成固定时序，CoreXYTask 只需给两组坐标
+ * - 实现要点：
+ *   1. 抓取：移到 (x1,y1) -> 电机下降 -> 舵机1下降 5 齿 -> 开泵吸住
+ *   2. 抬起：电机上升与舵机1回升 5 齿同时进行
+ *   3. 放置：移到 (x2,y2) -> 直接停泵松开（电机和舵机都不再动作）
+ *   4. 收尾：等待 300ms 让物体落稳
+ * - 数据流：坐标(mm) -> CoreXY_MoveTo；标志位 -> GrabTask 执行电机命令；
+ *   Servo1_MoveTeeth 按 167us/齿写 TIM4 CH3
+ * - 注意事项：全程使用 osDelay，必须在任务上下文调用；电机动作按 GRAB_MOTOR_DOWN_MS/UP_MS
+ *   等待，不能与 GrabTask 的电机动作并发下发
+ * - 调用关系：由 CoreXYTask 在回零完成后调用
+ *
+ * @param x1 取物点 X 坐标，单位 mm
+ * @param y1 取物点 Y 坐标，单位 mm
+ * @param x2 放置点 X 坐标，单位 mm
+ * @param y2 放置点 Y 坐标，单位 mm
+ * @retval 无
+ */
 void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2)
 {
    /* K 为时间系数：1.0 = 按 100RPM 的理论匀速时间，加减速明显时调大即可 */
@@ -173,32 +252,31 @@ void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2)
    float dx=(float)x1-CoreXY_GetPositionX();
    float dy=(float)y1-CoreXY_GetPositionY();
 
+   /* ===== 抓取阶段：移动到取物点 -> 电机下降 -> 舵机下降 5 齿 -> 开泵吸住 ===== */
    CoreXY_MoveTo(x1,y1,speed_rpm,accel);
-   uint32_t time=Grab_MoveTimeMs(dx,dy,speed_rpm,K);
-   Grab_MotorBeginFlag=1;
-   if(time>4250){
-   osDelay(time);
-  }
-  else if(time<4250){
-  osDelay(4250-time);
+   osDelay(Grab_MoveTimeMs(dx,dy,speed_rpm,K));
 
-  }
+   Grab_MotorDown();
+   Grab_ServoDown();
+   /* 舵机走完 5 齿后再留出余量，确认完全到位才开泵 */
+   osDelay(GRAB_SUCTION_DELAY_MS);
    Grab_Begin();
 
+   /* 吸住后：电机上升与舵机回升 5 齿同时开始 */
+   Grab_MotorEndFlag = 1U;
+   Grab_ServoUp();
+   osDelay((GRAB_MOTOR_UP_MS > GRAB_SERVO1_MOVE_MS ?
+            (GRAB_MOTOR_UP_MS - GRAB_SERVO1_MOVE_MS) : 0U) + GRAB_MOTOR_WAIT_MARGIN_MS);
+
+   /* ===== 放置阶段：移动到最终位置 -> 直接停泵松开（电机和舵机都不再动作） ===== */
    dx=(float)x2-CoreXY_GetPositionX();
    dy=(float)y2-CoreXY_GetPositionY();
    CoreXY_MoveTo(x2,y2,speed_rpm,accel);
-   time=Grab_MoveTimeMs(dx,dy,speed_rpm,K);
-   //osDelay(time);
-  Grab_MotorEndFlag=1;
+   osDelay(Grab_MoveTimeMs(dx,dy,speed_rpm,K));
 
-   if(time>4250){
-   osDelay(time);
-  }
-  else if(time<4250){
-  osDelay(4250-time);
-
-  }
    Grab_End();
-   }
+
+   /* 松泵后稍等物体落稳 */
+   osDelay(300U);
+}
 

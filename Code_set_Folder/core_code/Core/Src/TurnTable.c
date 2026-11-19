@@ -1,8 +1,10 @@
 #include "TurnTable.h"
+#include "servo.h"
 #include "main.h"
 #include "cmsis_os2.h"
 #include <math.h>
 extern UART_HandleTypeDef huart5;
+TurnTable_Shape_t GrabShape=SHAPE_NULL;
 uint8_t Turn_Flag;
 static uint8_t CurTable=0;
 
@@ -73,7 +75,7 @@ CurTable=Table;
  */
 void TurnTableTask(void *argument)
 {
-  uint8_t i=0;
+  
   (void)argument;
   for (;;)
   {
@@ -87,8 +89,10 @@ void TurnTableTask(void *argument)
     }
     #endif
 if(Turn_Flag==1){
-Turn_Flag==0;
-TurnTable_Set(i);
+Turn_Flag=0;
+TurnTable_Set((uint8_t)GrabShape);
+osDelay(700);
+Servo2_OpenFlag=1;
 
 }
  osDelay(50);

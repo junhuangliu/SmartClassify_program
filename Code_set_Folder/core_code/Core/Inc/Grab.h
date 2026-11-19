@@ -6,6 +6,7 @@
 #include  "WaterPump.h"
 #include "uart1_proto.h"
 #include "CoreXY.h"
+#include "TurnTable.h"
 extern UART_HandleTypeDef huart6;
 
 /**
@@ -30,7 +31,7 @@ void GrabTask(void *argument);
 void Grab_To_Zero(void);
 void Grab_Begin(void);
 void Grab_End(void);
-void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2);
+void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2,TurnTable_Shape_t Shape);
 #define Destination_X 100
 #define Destination_Y 240
 #define X0 0

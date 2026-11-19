@@ -1,6 +1,9 @@
 #include "servo.h"
-uint8_t Servo_Flag1;
-uint8_t Servo_Angle1;
+
+ uint8_t Servo1_FallFlag=0;
+ uint8_t Servo1_RiseFlag=0;
+ uint8_t Servo2_OpenFlag=0;
+ uint8_t Servo2_CloseFlag=0;
 float duty;
 
 /* 舵机测试模式：
@@ -167,77 +170,43 @@ void Servo_SetPulseUs(uint32_t pulse_us, uint32_t channel)
 void Servo_Init(void){
   HAL_TIM_PWM_Start(&htim4,TIM_CHANNEL_4);
   HAL_TIM_PWM_Start(&htim4,TIM_CHANNEL_3);
-  __HAL_TIM_SET_COMPARE(&htim4,TIM_CHANNEL_3,0);	
-  __HAL_TIM_SET_COMPARE(&htim4,TIM_CHANNEL_4,0);	
- 
 }
 
 void ServoTask(void *argument){
-#if SERVO_TEST_MODE == 0
-  /* 关闭测试：两路先都不输出脉冲；
-     舵机1(抓取升降)由 Grab_XY 通过 Servo_SetPulseUs 控制，舵机2暂不使用 */
-  __HAL_TIM_SET_COMPARE(&htim4,TIM_CHANNEL_3,0);
-  __HAL_TIM_SET_COMPARE(&htim4,TIM_CHANNEL_4,0);
+  
+ Servo_SetAngle(70, TIM_CHANNEL_3);
+for(;;){
 
-  for(;;){
-    if(Servo_Flag1==1){
-      Servo_Flag1=0;
-      Servo_SetAngle(Servo_Angle1, TIM_CHANNEL_3);
-    }
-    osDelay(20);
-  }
-#else
-#if SERVO_TEST_MODE == 3
-  uint8_t test_phase = 0U;
-#endif
+if(Servo1_FallFlag){
+  Servo1_FallFlag=0;
+  Servo1_MoveTeeth(10);
+}
+ 
+if(Servo1_RiseFlag){
+  Servo1_RiseFlag=0;
+  Servo1_MoveTeeth(-10);
 
-  /* 未参与测试的通道先关闭，避免误动作 */
-#if SERVO_TEST_MODE == 1
-  __HAL_TIM_SET_COMPARE(&htim4,TIM_CHANNEL_4,0);
-#elif SERVO_TEST_MODE == 2
-  __HAL_TIM_SET_COMPARE(&htim4,TIM_CHANNEL_3,0);
-#endif
+}
+if(Servo2_OpenFlag){
+  Servo2_OpenFlag=0;
+Servo2_Open();
+osDelay(3000);
+Servo2_CloseFlag=1;
+}
+if(Servo2_CloseFlag){
+  Servo2_CloseFlag=0;
+Servo2_Return();
 
-  for(;;){
-#if SERVO_TEST_MODE == 1
-    /* 舵机1：调用齿数接口验证 +5 齿 -> -5 齿回位 */
-    Servo1_MoveTeeth(5);
-    osDelay(500U);
-    Servo1_MoveTeeth(-5);
-    osDelay(500U);
-#elif SERVO_TEST_MODE == 2
-    /* 舵机2：打开（反转 10 齿）-> 停 -> 回位（正转 10 齿） */
-    Servo2_Open();
-    osDelay(SERVO360_TEST_STOP_MS);
-    Servo2_Return();
-    osDelay(SERVO360_TEST_STOP_MS);
-#elif SERVO_TEST_MODE == 3
-    /* 舵机1：0.5ms <-> 2.5ms 全行程往返 */
-    Servo_SetPulseUs(((test_phase & 1U) != 0U) ? SERVO180_PULSE_MAX_US : SERVO180_PULSE_MIN_US,
-                     TIM_CHANNEL_3);
+}
+osDelay(20);
+}
 
-    /* 舵机2：正转 -> 停 -> 反转 -> 停 */
-    switch (test_phase)
-    {
-      case 0U:
-        Servo_SetPulseUs(SERVO360_PULSE_CW_US, TIM_CHANNEL_4);
-        break;
-      case 1U:
-        Servo_SetPulseUs(SERVO360_PULSE_STOP_US, TIM_CHANNEL_4);
-        break;
-      case 2U:
-        Servo_SetPulseUs(SERVO360_PULSE_CCW_US, TIM_CHANNEL_4);
-        break;
-      default:
-        Servo_SetPulseUs(SERVO360_PULSE_STOP_US, TIM_CHANNEL_4);
-        break;
-    }
 
-    test_phase = (uint8_t)((test_phase + 1U) & 0x03U);
-    osDelay(SERVO_TEST_INTERVAL_MS);
-#endif
-  }
-#endif
+
+
+
+
+
 }
 
 void Servo_SetAngle(float Angle, uint32_t CHANNEL){

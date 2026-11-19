@@ -1,5 +1,6 @@
 #include "Grab.h"
 #include "servo.h"
+#include  "TurnTable.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -15,8 +16,8 @@
 #define GRAB_SUCTION_DELAY_MS     300U
 
 /* 抓取电机单次动作时间：抓取段下降行程需要更深，比上升多走 550ms */
-#define GRAB_MOTOR_DOWN_MS        5100U
-#define GRAB_MOTOR_UP_MS          4250U
+#define GRAB_MOTOR_DOWN_MS        5000U
+#define GRAB_MOTOR_UP_MS          5000U   
 /* 等待余量：GrabTask 动作结束后再多等 50ms 确保停稳 */
 #define GRAB_MOTOR_WAIT_MARGIN_MS 50U
 
@@ -236,6 +237,8 @@ void Grab_End()
  * - 注意事项：全程使用 osDelay，必须在任务上下文调用；电机动作按 GRAB_MOTOR_DOWN_MS/UP_MS
  *   等待，不能与 GrabTask 的电机动作并发下发
  * - 调用关系：由 CoreXYTask 在回零完成后调用
+ * - 形状分派：SHAPE_SPHERE(球) 走先横移再下降的吸球流程；其余形状（长方体、正方体、
+ *   圆锥、六棱柱、五棱柱）共用横移与下降重叠的通用流程；SHAPE_NULL 直接返回不动作
  *
  * @param x1 取物点 X 坐标，单位 mm
  * @param y1 取物点 Y 坐标，单位 mm
@@ -243,15 +246,20 @@ void Grab_End()
  * @param y2 放置点 Y 坐标，单位 mm
  * @retval 无
  */
-void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2)
+void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2,TurnTable_Shape_t Shape)
 {
+  if(Shape==SHAPE_NULL){
+  return;
+
+  }
+  
    /* K 为时间系数：1.0 = 按 100RPM 的理论匀速时间，加减速明显时调大即可 */
    const float K=1.9f; const uint16_t speed_rpm=100U;  //1.9-2.1  
    const uint8_t accel=40U;
    /* 当前位置直接取 CoreXY 模块跟踪的规划坐标，不再在这里另存一份 */
    float dx=(float)x1-CoreXY_GetPositionX();
    float dy=(float)y1-CoreXY_GetPositionY();
-
+if(Shape==SHAPE_SPHERE){
    /* ===== 抓取阶段：移动到取物点 -> 电机下降 -> 舵机下降 5 齿 -> 开泵吸住 ===== */
    CoreXY_MoveTo(x1,y1,speed_rpm,accel);
    osDelay(Grab_MoveTimeMs(dx,dy,speed_rpm,K));
@@ -277,6 +285,47 @@ void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2)
    Grab_End();
 
    /* 松泵后稍等物体落稳 */
-   osDelay(300U);
+   osDelay(700U);
+   Turn_Flag=1;
+  GrabShape=Shape;
+  }
+  /* 其余形状（长方体、正方体、圆锥、六棱柱、五棱柱）动作流程一致，统一走这一支 */
+ else {
+  CoreXY_MoveTo(x1,y1,speed_rpm,accel);
+
+  uint32_t time=Grab_MoveTimeMs(dx,dy,speed_rpm,K);
+  Grab_MotorBeginFlag=1;
+  if(time>=GRAB_MOTOR_DOWN_MS){
+  osDelay(time);
+     }
+     else if(time<GRAB_MOTOR_DOWN_MS){
+
+    osDelay(GRAB_MOTOR_DOWN_MS);
+     }
+    Grab_ServoDown();
+   /* 舵机走完 5 齿后再留出余量，确认完全到位才开泵 */
+   osDelay(GRAB_SUCTION_DELAY_MS);
+   Grab_Begin();
+
+   /* 吸住后：电机上升与舵机回升 5 齿同时开始 */
+   Grab_MotorEndFlag = 1U;
+   Grab_ServoUp();
+   osDelay((GRAB_MOTOR_UP_MS > GRAB_SERVO1_MOVE_MS ?
+            (GRAB_MOTOR_UP_MS - GRAB_SERVO1_MOVE_MS) : 0U) + GRAB_MOTOR_WAIT_MARGIN_MS);
+
+   /* ===== 放置阶段：移动到最终位置 -> 直接停泵松开（电机和舵机都不再动作） ===== */
+   dx=(float)x2-CoreXY_GetPositionX();
+   dy=(float)y2-CoreXY_GetPositionY();
+   CoreXY_MoveTo(x2,y2,speed_rpm,accel);
+   osDelay(Grab_MoveTimeMs(dx,dy,speed_rpm,K));
+
+   Grab_End();
+
+   /* 松泵后稍等物体落稳 */
+   osDelay(700U); 
+  Turn_Flag=1;
+  GrabShape=Shape;
+ }
+
 }
 

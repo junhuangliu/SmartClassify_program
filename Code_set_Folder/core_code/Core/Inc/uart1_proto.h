@@ -6,12 +6,14 @@
   ******************************************************************************
   * @attention
   *
-  * 协议约定（文本，大小写不敏感，以 \r 或 \n 结尾）：
+  * 协议约定（文本，大小写不敏感，以 \r 、 \n 或 / 结尾）：
   * - switch:1       调用原有 WaterPump_Start() 开启水泵/阀
   * - switch:0       调用原有 WaterPump_Stop() 关闭水泵/阀
   * - pump:<0~100>   不支持；原有水泵接口使用固定占空比
   * - STATUS         查询 CoreXY 通信初始化状态
  * - PING           连通测试
+  * - X<x>,Y<y>,<shape>/  抓取任务帧：x/y 为取物点坐标(mm)，shape 为 0~5 形状号，
+  *                       '/' 为帧尾，例如 X120,Y30,3/ 表示到 (120,30) 抓 3 号形状
   *
   * 全部自定义逻辑均放置于 USER CODE 区域，符合项目约束。
   ******************************************************************************
@@ -27,6 +29,21 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "TurnTable.h"
+
+/* Exported types ------------------------------------------------------------*/
+/**
+ * @brief 上位机下发的一次抓取任务
+ *
+ * @details 由 Uart1RxTask 解析帧后入队，CoreXYTask 取出并执行阻塞的 Grab_XY，
+ *          形状号即转台工位号，两者共用 TurnTable_Shape_t，避免再做映射。
+ */
+typedef struct
+{
+  uint16_t x;              /* 取物点 X 坐标，单位 mm */
+  uint16_t y;              /* 取物点 Y 坐标，单位 mm */
+  TurnTable_Shape_t shape; /* 物料形状，取值 SHAPE_CUBOID~SHAPE_PENTA_PRISM */
+} Uart1Proto_Job_t;
 
 /* Exported functions prototypes ---------------------------------------------*/
 /**
@@ -65,6 +82,20 @@ void Uart1Proto_Feed(const uint8_t *data, uint16_t len);
  * @retval 无
  */
 void Uart1Proto_Send(const char *str);
+
+/**
+ * @brief 取出上位机下发的一条抓取任务
+ *
+ * @details
+ * - 设计意图：帧解析放在 Uart1RxTask，抓取动作由 CoreXYTask 执行，
+ *   用单生产者/单消费者队列解耦，避免解析上下文长时间阻塞在机械动作上
+ * - 实现要点：非阻塞读取，队列为空立即返回 0；任务由 X<x>,Y<y>,<shape>/ 帧产生
+ * - 注意事项：仅在任务上下文调用；取出即消费，失败不重试
+ *
+ * @param job 输出参数，取到任务时写入坐标与形状
+ * @retval 1 取到任务；0 无任务或参数非法
+ */
+uint8_t Uart1Proto_TakeJob(Uart1Proto_Job_t *job);
 
 #ifdef __cplusplus
 }

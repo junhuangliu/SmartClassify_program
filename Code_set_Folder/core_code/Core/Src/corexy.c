@@ -12,6 +12,10 @@
 #include "Grab.h"
 #define COREXY_TX_TIMEOUT_US 100000U
 
+/* 放置点（转台托盘）坐标，沿用原调试值：Destination 往左 45mm、往下 10mm */
+#define GRAB_PLACE_X ((uint16_t)(Destination_X - 45U))
+#define GRAB_PLACE_Y ((uint16_t)(Destination_Y + 10U))
+
 
 extern UART_HandleTypeDef huart2;
 extern UART_HandleTypeDef huart3;
@@ -660,7 +664,7 @@ HAL_StatusTypeDef CoreXY_MoveOriginUSART2(void)
 {
   /* 电流阈值变量：现场调试时只改这两个值即可，单位 mA，指相对运动基线的增量 */
   uint16_t threshold_y_ma = 400U; /* Y 轴：带动整个横梁，负载重，阈值大 */
-  uint16_t threshold_x_ma = 250U; /* X 轴：负载轻，阈值小 */
+  uint16_t threshold_x_ma = 300U; /* X 轴：负载轻，阈值小 */
   const uint8_t required_samples = 2U;
   const uint32_t poll_ms = 20U;
   const uint32_t reply_timeout_ms = 100U;
@@ -820,7 +824,7 @@ cleanup:
 void CoreXYTask(void *argument)
 {
   
-
+osDelay(5000U);//等待电机上电初始化
 Grab_To_Zero();
 osDelay(1000U);
   HAL_StatusTypeDef origin_status;
@@ -847,7 +851,7 @@ osDelay(1000U);
 //WaterPump_Stop();
 
 //Grab_Begin();
-Grab_XY(120,30 , (uint16_t)(Destination_X - 6U), (uint16_t)(Destination_Y + 6U));
+//Grab_XY(120,30 , (uint16_t)(Destination_X - 45U), (uint16_t)(Destination_Y + 10U),SHAPE_SPHERE);
 ///StepperMotor_SetSpeed(&stepper_motor_b2, 0, 100,10, false);
 //osDelay(1000U);
 //StepperMotor_Stop(&stepper_motor_b2);
@@ -860,9 +864,17 @@ Grab_XY(120,30 , (uint16_t)(Destination_X - 6U), (uint16_t)(Destination_Y + 6U))
 //Grab_End();
   for (;;)
   {
-   
-    osDelay(5000U);
-   
+    Uart1Proto_Job_t job;
+
+    /* 上位机抓取帧由 Uart1RxTask 解析入队，阻塞的机械动作统一在本任务执行 */
+    if (Uart1Proto_TakeJob(&job) != 0U)
+    {
+      Grab_XY(job.x, job.y, GRAB_PLACE_X, GRAB_PLACE_Y, job.shape);
+      Uart1Proto_Send("OK GRAB DONE\r\n");
+      continue;
+    }
+
+    osDelay(50U);
   }
 }
 

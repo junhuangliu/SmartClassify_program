@@ -28,6 +28,7 @@
 #include "uart1_comm.h"
 #include "uart1_proto.h"
 #include "ws2812_spi.h"
+#include "WaterPump.h"
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -190,14 +191,20 @@ void PA10BlinkTask(void *argument)
 }
 
 /**
- * @brief 水泵任务入口，供后续添加水泵控制逻辑
+ * @brief 水泵任务入口：消费命令标志位，执行实际启停与调速
  *
  * @details 详细思路：
- * - 设计意图：保留独立的水泵任务循环，不与 CoreXY 电机任务联动
- * - 实现要点：占位阶段每轮 osDelay(100) 主动让出 CPU，绝不能写空转死循环
- * - 注意事项：本任务优先级为 osPriorityNormal(24)。若循环体不阻塞，它永远处于就绪态，
- *   抢占式调度下所有低优先级任务（如 osPriorityBelowNormal(16) 的 ServoTask）将永远拿不到时间片，
- *   表现为舵机等低优先级任务完全不执行；同时空闲任务也跑不到，CPU 占用 100%
+ * - 设计意图：串口解析只置标志/改变量，水泵的阀门时序（含 100~200ms 等待）统一在本任务执行，
+ *   避免 Uart1RxTask 长时间阻塞，也避免多任务同时操作 TIM4 比较寄存器
+ * - 实现要点：
+ *   1. 每 100ms 检查一次标志，On/Off 优先于占空比刷新
+ *   2. On：清标志后调用 WaterPump_Start()（先开阀再启泵）
+ *   3. Off：清标志后调用 WaterPump_Stop()（先停泵再关阀）
+ *   4. Duty：清标志后调用 WaterPump_ApplyDuty()，泵运行中即时刷新 CCR 改变转速
+ *   5. On/Off 在解析侧互斥置位，这里只需按标志执行，最终状态等于最后一条命令
+ * - 数据流：Uart1RxTask 置位 WaterPump_*Flag -> 本任务消费 -> TIM4 CCR1/CCR2
+ * - 注意事项：本任务优先级为 osPriorityNormal(24)，循环里必须 osDelay 让出 CPU，
+ *   否则会饿死 osPriorityBelowNormal(16) 的舵机任务；标志为 volatile，跨任务可见
  * - 调用关系：仅由 main.c 的 osThreadNew 创建，运行在任务上下文
  *
  * @param argument 未使用
@@ -206,8 +213,27 @@ void PA10BlinkTask(void *argument)
 void WaterPumpTask(void *argument)
 {
   (void)argument;
+
   for (;;)
   {
+    if (WaterPump_OnFlag != 0U)
+    {
+      WaterPump_OnFlag = 0U;
+      WaterPump_DutyUpdateFlag = 0U;
+      WaterPump_Start();
+    }
+    else if (WaterPump_OffFlag != 0U)
+    {
+      WaterPump_OffFlag = 0U;
+      WaterPump_DutyUpdateFlag = 0U;
+      WaterPump_Stop();
+    }
+    else if (WaterPump_DutyUpdateFlag != 0U)
+    {
+      WaterPump_DutyUpdateFlag = 0U;
+      WaterPump_ApplyDuty();
+    }
+
     osDelay(100U);
   }
 }

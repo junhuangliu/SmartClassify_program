@@ -32,13 +32,22 @@ void Grab_To_Zero(void);
 void Grab_Begin(void);
 void Grab_End(void);
 void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2,TurnTable_Shape_t Shape);
-#define Destination_X 100
-#define Destination_Y 240
-#define X0 0
-#define Y0 -15
-#define X1 200
-#define Y1 -15
-#define X2 0
-#define Y2 165
+
+/* 常用坐标点：运行期可通过 UART1 的 Set,<名称>,<数值>/ 动态修改；
+   因特殊点存在负值（如 Y0=-15），统一用有符号类型存储 */
+extern volatile int16_t Destination_X;
+extern volatile int16_t Destination_Y;
+
+/* 执行标志位：Uart1RxTask 收到 MDown/MUp 后置位，GrabTask 消费后清零 */
+extern volatile uint8_t Grab_MotorBeginFlag;
+extern volatile uint8_t Grab_MotorEndFlag;
+
+/* 标定特殊点：成对使用 (X0,Y0)/(X1,Y1)/(X2,Y2)，可用 MoveTo,X0,Y0/ 直达 */
+extern volatile int16_t X0;
+extern volatile int16_t Y0;
+extern volatile int16_t X1;
+extern volatile int16_t Y1;
+extern volatile int16_t X2;
+extern volatile int16_t Y2;
 
 #endif

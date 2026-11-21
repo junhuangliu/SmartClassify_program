@@ -1,7 +1,7 @@
 #include "servo.h"
 
- uint8_t Servo1_FallFlag=0;
- uint8_t Servo1_RiseFlag=0;
+ volatile uint8_t Servo1_FallFlag=0;
+ volatile uint8_t Servo1_RiseFlag=0;
  uint8_t Servo2_OpenFlag=0;
  uint8_t Servo2_CloseFlag=0;
 float duty;
@@ -179,12 +179,12 @@ for(;;){
 
 if(Servo1_FallFlag){
   Servo1_FallFlag=0;
-  Servo1_MoveTeeth(10);
+  Servo1_MoveTeeth(-10);
 }
  
 if(Servo1_RiseFlag){
   Servo1_RiseFlag=0;
-  Servo1_MoveTeeth(-10);
+  Servo1_MoveTeeth(10);
 
 }
 if(Servo2_OpenFlag){

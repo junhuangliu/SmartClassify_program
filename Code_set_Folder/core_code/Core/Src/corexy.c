@@ -12,9 +12,13 @@
 #include "Grab.h"
 #define COREXY_TX_TIMEOUT_US 100000U
 
-/* 放置点（转台托盘）坐标，沿用原调试值：Destination 往左 45mm、往下 10mm */
-#define GRAB_PLACE_X ((uint16_t)(Destination_X - 45U))
-#define GRAB_PLACE_Y ((uint16_t)(Destination_Y + 10U))
+/* MoveTo 帧的执行参数：与 Grab_XY 抓取段保持一致，速度适中、加减速平缓 */
+#define COREXY_MOVE_SPEED_RPM         100U
+#define COREXY_MOVE_ACCEL             40U
+/* 运动时间估算系数：与 Grab.c 的 K 一致，补偿加减速段和驱动器启动延时 */
+#define COREXY_MOVE_TIME_COEFFICIENT  1.9f
+/* 估算时间外再留的余量，确保到位后才回 OK MOVE DONE */
+#define COREXY_MOVE_WAIT_MARGIN_MS    100U
 
 
 extern UART_HandleTypeDef huart2;
@@ -282,6 +286,40 @@ HAL_StatusTypeDef CoreXY_MoveTo(float x, float y, uint16_t speed,
     corexy_target_y = y;
   }
   return status;
+}
+
+/**
+ * @brief 按行程估算一段 CoreXY 绝对移动所需时间
+ *
+ * @details
+ * - 设计意图：CoreXY_MoveTo 只下发位置命令就返回，MoveTo 帧需要等运动结束再回
+ *   OK MOVE DONE，否则后续任务会在上一段仍运动时插入，导致实际轨迹不确定
+ * - 实现要点：与 CoreXY_Move 的取速方式保持一致——两轴同时运动时按最长那条皮带
+ *   行程计时（|dx+dy| 与 |dx-dy| 取大者），再按 速度(RPM) × 每转皮带行程 折算成
+ *   毫秒，最后乘系数补偿加减速段
+ * - 数据流：dx/dy(mm，由当前规划坐标与目标点相减得到) -> 最长皮带行程 -> 时间(ms)
+ * - 注意事项：只是估算值，轴上实际负载/限速不同会有偏差；调用者应再加等待余量
+ *
+ * @param dx X 方向位移，单位 mm
+ * @param dy Y 方向位移，单位 mm
+ * @param speed_rpm 该段使用的最高速度，单位 RPM
+ * @retval 估算的等待时间，单位 ms；速度非法或零位移时返回 0
+ */
+static uint32_t CoreXY_EstimateMoveMs(float dx, float dy, uint16_t speed_rpm)
+{
+  const float belt_mm_per_rev = COREXY_BELT_TOOTH_PITCH_MM * COREXY_PULLEY_TEETH;
+  float max_belt = fmaxf(fabsf(dx + dy), fabsf(dx - dy));
+  float time_ms;
+
+  if (speed_rpm == 0U)
+  {
+    return 0U;
+  }
+
+  /* mm ÷ (RPM × mm/转) = 分钟，再 × 60000 换成毫秒 */
+  time_ms = (COREXY_MOVE_TIME_COEFFICIENT * max_belt * 60000.0f) /
+            ((float)speed_rpm * belt_mm_per_rev);
+  return (uint32_t)(time_ms + 0.5f);
 }
 
 /**
@@ -817,8 +855,9 @@ cleanup:
  * @details
  * - 设计意图：为 CoreXY 电机控制保留独立 FreeRTOS 任务入口。
  * - 实现要点：上电先做一次碰撞回零（先 Y 后 X）；失败时在 UART1 报告具体原因，
- *   不自动重试，避免反复顶限位；之后进入 1s 周期的空循环，等待后续命令接入。
- * - 注意事项：回零是阻塞调用（两轴各有 20s 安全超时），期间本任务不处理其它请求。
+ *   不自动重试，避免反复顶限位；之后以 50ms 周期轮询任务队列，
+ *   Grab 帧执行 Grab_XY，MoveTo 帧执行 CoreXY_MoveTo。
+ * - 注意事项：回零与抓取都是阻塞调用（两轴各有 20s 安全超时），期间本任务不处理其它请求。
  * @param argument 未使用。
  */
 void CoreXYTask(void *argument)
@@ -866,11 +905,33 @@ osDelay(1000U);
   {
     Uart1Proto_Job_t job;
 
-    /* 上位机抓取帧由 Uart1RxTask 解析入队，阻塞的机械动作统一在本任务执行 */
+    /* 上位机任务帧由 Uart1RxTask 解析入队，阻塞的机械动作统一在本任务执行 */
     if (Uart1Proto_TakeJob(&job) != 0U)
     {
-      Grab_XY(job.x, job.y, GRAB_PLACE_X, GRAB_PLACE_Y, job.shape);
-      Uart1Proto_Send("OK GRAB DONE\r\n");
+      if (job.type == UART1_PROTO_JOB_MOVE)
+      {
+        uint16_t speed = COREXY_MOVE_SPEED_RPM;
+        uint32_t wait_ms = CoreXY_EstimateMoveMs((float)job.x - CoreXY_GetPositionX(),
+                                                 (float)job.y - CoreXY_GetPositionY(),
+                                                 speed);
+
+        /* MoveTo 只下发命令就返回，按行程等运动结束再回执，避免后续任务插入当前轨迹 */
+        if (CoreXY_MoveTo((float)job.x, (float)job.y, speed, COREXY_MOVE_ACCEL) == HAL_OK)
+        {
+          osDelay(wait_ms + COREXY_MOVE_WAIT_MARGIN_MS);
+          Uart1Proto_Send("OK MOVE DONE\r\n");
+        }
+        else
+        {
+          Uart1Proto_Send("ERR MOVE\r\n");
+        }
+      }
+      else
+      {
+        Grab_XY((uint16_t)job.x, (uint16_t)job.y,
+                (uint16_t)Destination_X, (uint16_t)Destination_Y, job.shape);
+        Uart1Proto_Send("OK GRAB DONE\r\n");
+      }
       continue;
     }
 

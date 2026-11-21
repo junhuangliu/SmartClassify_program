@@ -1,5 +1,16 @@
 #include "WaterPump.h"
 
+/* 运行期水泵占空比（%），上电取默认值，UART1 收到 Waterpump,<duty>/ 后直接改写 */
+volatile uint8_t WaterPump_DutyPercent = WATER_PUMP_DUTY_DEFAULT;
+
+/* 命令标志位：由 Uart1RxTask 置位，WaterPumpTask 消费，避免串口解析上下文长时间阻塞 */
+volatile uint8_t WaterPump_OnFlag = 0U;
+volatile uint8_t WaterPump_OffFlag = 0U;
+volatile uint8_t WaterPump_DutyUpdateFlag = 0U;
+
+/* 水泵当前是否在转：Stop 后禁止直接刷 CCR，否则会把泵重新打开 */
+static volatile uint8_t pump_running = 0U;
+
 /**
  * @brief 初始化水泵/阀门 PWM 输出（50Hz），并保证上电时为关闭状态
  *
@@ -42,6 +53,7 @@ void WaterPump_Start(void){
 __HAL_TIM_SET_COMPARE(&htim4, VALVE_CH, 0);
 osDelay(200);
 __HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, WATER_PUMP_DUTY_CCR);
+pump_running = 1U;
 }
 
 /**
@@ -57,9 +69,32 @@ __HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, WATER_PUMP_DUTY_CCR);
  */
 void WaterPump_Stop(void){
 __HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, 0);
+pump_running = 0U;
 osDelay(100);
-__HAL_TIM_SET_COMPARE(&htim4, VALVE_CH, WATER_PUMP_DUTY_CCR);
+__HAL_TIM_SET_COMPARE(&htim4, VALVE_CH, WATER_PUMP_VALVE_CCR);
 osDelay(100);
 __HAL_TIM_SET_COMPARE(&htim4, VALVE_CH, 0);
 
+}
+
+/**
+ * @brief 把当前 WaterPump_DutyPercent 下发到水泵 PWM 通道
+ *
+ * @details
+ * - 设计意图：串口改占空比时只改变量，由 WaterPumpTask 在任务上下文刷新 CCR，
+ *   实现不停泵调速
+ * - 实现要点：仅在泵运行中写 PUMP_CH 的 CCR；泵已停止时直接返回，
+ *   避免把 0 占空比之外的值写进去导致停着的泵重新转动
+ * - 数据流：WaterPump_DutyPercent(%) -> WATER_PUMP_DUTY_CCR -> TIM4 CCR1
+ * - 注意事项：内部无阻塞；由 WaterPumpTask 消费 WaterPump_DutyUpdateFlag 时调用
+ *
+ * @param 无
+ * @retval 无
+ */
+void WaterPump_ApplyDuty(void){
+if(pump_running == 0U){
+return;
+}
+
+__HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, WATER_PUMP_DUTY_CCR);
 }

@@ -4,6 +4,18 @@
 #include <math.h>
 #include <stdio.h>
 
+/* 常用坐标点：运行期由 UART1 的 Set,<名称>,<数值>/ 修改，MoveTo 帧可按名称引用 */
+volatile int16_t Destination_X = 70;
+volatile int16_t Destination_Y = 245;
+
+/* 标定特殊点：成对表示 (X0,Y0)/(X1,Y1)/(X2,Y2) */
+volatile int16_t X0 = 0;
+volatile int16_t Y0 = 0;
+volatile int16_t X1 = 180;
+volatile int16_t Y1 = 0;
+volatile int16_t X2 = 0;
+volatile int16_t Y2 = 180;
+
 /* 电机每转的皮带行程：20 齿 × 2mm 齿距 = 40mm */
 #define GRAB_BELT_MM_PER_REV \
   (COREXY_BELT_TOOTH_PITCH_MM * COREXY_PULLEY_TEETH)
@@ -22,8 +34,8 @@
 #define GRAB_MOTOR_WAIT_MARGIN_MS 50U
 
 
-uint8_t Grab_MotorBeginFlag=0;
-uint8_t Grab_MotorEndFlag=0;
+volatile uint8_t Grab_MotorBeginFlag=0;
+volatile uint8_t Grab_MotorEndFlag=0;
 
 /**
  * @brief 触发抓取电机下降到抓取位并等待动作完成
@@ -254,7 +266,7 @@ void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2,TurnTable_Shape_t S
   }
   
    /* K 为时间系数：1.0 = 按 100RPM 的理论匀速时间，加减速明显时调大即可 */
-   const float K=1.9f; const uint16_t speed_rpm=100U;  //1.9-2.1  
+   const float K=1.9f; const uint16_t speed_rpm=200U;  //1.9-2.1  
    const uint8_t accel=40U;
    /* 当前位置直接取 CoreXY 模块跟踪的规划坐标，不再在这里另存一份 */
    float dx=(float)x1-CoreXY_GetPositionX();

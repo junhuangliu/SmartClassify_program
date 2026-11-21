@@ -9,8 +9,8 @@
 #include "Servo.h"
 #include "WaterPump.h"
 #include "Grab.h"
-extern uint8_t Servo1_FallFlag;
-extern uint8_t Servo1_RiseFlag;
+extern volatile uint8_t Servo1_FallFlag;
+extern volatile uint8_t Servo1_RiseFlag;
 extern uint8_t Servo2_OpenFlag;
 extern uint8_t Servo2_CloseFlag;
 void Servo_Init(void);

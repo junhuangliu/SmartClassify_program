@@ -22,6 +22,7 @@ HAL_StatusTypeDef TurnTable_Init(void)
   HAL_NVIC_EnableIRQ(UART5_IRQn);
   return StepperMotor_Init(&stepper_motor_b2, &huart5);
 }
+
 void TurnTable_Set(uint8_t Table){
 if(Table>5){
 
@@ -88,11 +89,14 @@ void TurnTableTask(void *argument)
       i=0;
     }
     #endif
-if(Turn_Flag==1){
-Turn_Flag=0;
-TurnTable_Set((uint8_t)GrabShape);
+if(Turn_Flag){
+if(Turn_Flag<6){
+Turn_Flag--;
+TurnTable_Set(Turn_Flag);
 osDelay(700);
 Servo2_OpenFlag=1;
+Turn_Flag=0;
+}
 
 }
  osDelay(50);
@@ -118,3 +122,9 @@ void UART5_IRQHandler(void)
 {
   HAL_UART_IRQHandler(&huart5);
 }
+uint8_t TurntableAndServo_Check(){
+
+return Turn_Flag || Servo2_CloseFlag || Servo2_OpenFlag;
+
+}
+

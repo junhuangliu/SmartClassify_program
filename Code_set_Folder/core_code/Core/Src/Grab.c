@@ -15,13 +15,14 @@ volatile int16_t X1 = 180;
 volatile int16_t Y1 = 0;
 volatile int16_t X2 = 0;
 volatile int16_t Y2 = 180;
-
+volatile int16_t Wait_X = 90;
+volatile int16_t Wait_Y = 90;
 /* 电机每转的皮带行程：20 齿 × 2mm 齿距 = 40mm */
 #define GRAB_BELT_MM_PER_REV \
   (COREXY_BELT_TOOTH_PITCH_MM * COREXY_PULLEY_TEETH)
 
-/* 舵机1 抓取行程：下降 6 齿，吸住后回升 6 齿（Servo1_MoveTeeth 内部按 167us/齿换算） */
-#define GRAB_SERVO1_TEETH         6
+/* 舵机1 抓取行程：下降 10 齿，吸住后回升 10 齿（Servo1_MoveTeeth 内部按 167us/齿换算） */
+#define GRAB_SERVO1_TEETH         5
 /* 与 Servo1_MoveTeeth 内部的 SERVO1_MOVE_SETTLE_MS 保持一致，用于和电机动作并行计时 */
 #define GRAB_SERVO1_MOVE_MS       1500U
 /* 舵机到位后再多等一会儿，确保完全到抓取高度后才开泵 */
@@ -32,6 +33,9 @@ volatile int16_t Y2 = 180;
 #define GRAB_MOTOR_UP_MS          5000U   
 /* 等待余量：GrabTask 动作结束后再多等 50ms 确保停稳 */
 #define GRAB_MOTOR_WAIT_MARGIN_MS 50U
+/* 放置后的附加动作：抓取电机先下降 2.5s 再上升 2.5s（仍由 GrabTask 按标志位执行） */
+#define GRAB_RELEASE_DOWN_MS      2500U
+#define GRAB_RELEASE_UP_MS        2500U
 /* 等待 GrabTask 完成动作的超时：固定动作时长 + 余量 + 1s 容错 */
 #define GRAB_MOTOR_TIMEOUT_MS \
   (GRAB_MOTOR_DOWN_MS + GRAB_MOTOR_WAIT_MARGIN_MS + 1000U)
@@ -44,6 +48,10 @@ volatile uint8_t Grab_MotorEndFlag=0;
    不再依赖固定延时，避免 GrabTask 延迟响应时电机与舵机时序错位 */
 static volatile uint8_t Grab_MotorBusy=0U;
 static volatile uint8_t Grab_MotorDone=1U;
+
+/* 一次性动作时长覆盖：非 0 时 GrabTask 用该值代替 GRAB_MOTOR_DOWN_MS/UP_MS，
+   执行完自动清零，不影响后续正常抓取流程 */
+static volatile uint16_t Grab_MotorRunMs=0U;
 
 /**
  * @brief 启动一次抓取电机动作
@@ -132,6 +140,49 @@ static void Grab_MotorDownStart(void)
 static void Grab_MotorUpStart(void)
 {
   Grab_MotorStart(1U);
+}
+
+/* 舵机1 下降/回升：定义在下方，Grab_MotorRunFor 需要先声明才能并行调用 */
+static void Grab_ServoDown(void);
+static void Grab_ServoUp(void);
+
+/**
+ * @brief 按指定时长让抓取电机下降/上升，同时驱动舵机1 同向转动，等待两者都完成
+ *
+ * @details
+ * - 设计意图：放置后的附加动作只需要短时上下（2.5s），与抓取段的 5s 行程不同；
+ *   电机仍走"置方向标志 + GrabTask 执行"的既有机制，不绕过任务直接操作串口；
+ *   舵机与电机并行动作，缩短整段时序
+ * - 实现要点：
+ *   1. 先把本次时长写进 Grab_MotorRunMs（GrabTask 消费标志时读走并清零）
+ *   2. Grab_MotorStart 负责等上一次动作结束、清完成标志、置方向标志
+ *   3. 紧接着调用 Grab_ServoDown/Up，电机与舵机同时动作；
+ *      Servo1_MoveTeeth 内部 osDelay 到舵机走完，期间电机一直在跑
+ *   4. 最后 Grab_MotorWaitDone 等 GrabTask 停机，保证两者都结束才返回
+ * - 数据流：run_ms -> Grab_MotorRunMs -> GrabTask -> osDelay(run_ms) + 停机；
+ *   direction -> Grab_ServoDown/Up -> Servo1_MoveTeeth(∓GRAB_SERVO1_TEETH)
+ * - 注意事项：必须在任务上下文调用；run_ms 为 0 时 GrabTask 会退回默认宏时长
+ *
+ * @param direction 0=下降（BeginFlag + 舵机下降），1=上升（EndFlag + 舵机回升）
+ * @param run_ms 电机本次动作时长，单位 ms
+ * @retval 无
+ */
+static void Grab_MotorRunFor(uint8_t direction, uint16_t run_ms)
+{
+  Grab_MotorRunMs = run_ms;
+  Grab_MotorStart(direction);
+
+  /* 与电机并行：下降时舵机1 下降，上升时回升相同齿数 */
+  if (direction == 0U)
+  {
+    Grab_ServoDown();
+  }
+  else
+  {
+    Grab_ServoUp();
+  }
+
+  (void)Grab_MotorWaitDone();
 }
 
 /**
@@ -253,8 +304,18 @@ void GrabTask(void *argument)
 
     if (has_job != 0U)
     {
+      uint16_t run_ms;
+
       Grab_MotorBusy = 1U;
       Grab_MotorDone = 0U;
+
+      /* 一次性时长覆盖（Grab_MotorRunFor 用），用完即清，后续抓取仍用默认宏 */
+      run_ms = Grab_MotorRunMs;
+      Grab_MotorRunMs = 0U;
+      if (run_ms == 0U)
+      {
+        run_ms = (direction == 0U) ? GRAB_MOTOR_DOWN_MS : GRAB_MOTOR_UP_MS;
+      }
 
       if (StepperMotor_SetSpeed(&stepper_motor_a2, direction, 200, 50, false) != HAL_OK)
       {
@@ -264,7 +325,7 @@ void GrabTask(void *argument)
       }
       else
       {
-        osDelay((direction == 0U) ? GRAB_MOTOR_DOWN_MS : GRAB_MOTOR_UP_MS);
+        osDelay(run_ms);
         StepperMotor_Stop(&stepper_motor_a2);
       }
 
@@ -359,28 +420,22 @@ void Grab_End(void)
  *      舵机1下降 6 齿 -> 开泵吸住
  *   2. 抬起：电机上升与舵机1回升 6 齿同时进行，用完成标志等待电机停稳
  *   3. 放置：移到 (x2,y2) -> 停泵松开
- *   4. 收尾：等待 700ms 让物体落稳，再置 Turn_Flag 让转台转到 Shape 工位
+ *   4. 松件：抓取电机下降 2.5s 与舵机1 下降 5 齿同时进行，再一起上升 2.5s / 5 齿
+ *   5. 收尾：回到等待点 (Wait_X,Wait_Y) 后再等 300ms
  * - 数据流：坐标(mm) -> CoreXY_MoveTo；标志位 -> GrabTask 执行电机命令；
  *   Servo1_MoveTeeth 按 167us/齿写 TIM4 CH3；水泵命令交给 WaterPumpTask
  * - 注意事项：全程使用 osDelay，必须在任务上下文调用；不再直接写 Grab_MotorEndFlag，
  *   统一通过 Grab_Motor* 接口维护忙/完成标志，避免固定延时与实际动作错位
  * - 调用关系：由 CoreXYTask 取出 Grab 任务后调用
- * - 形状参数：仅用于转台工位选择，抓取动作本身不再区分形状；SHAPE_NULL 直接返回
  *
  * @param x1 取物点 X 坐标，单位 mm
  * @param y1 取物点 Y 坐标，单位 mm
  * @param x2 放置点 X 坐标，单位 mm
  * @param y2 放置点 Y 坐标，单位 mm
- * @param Shape 转台工位号（0~5），仅影响抓取完成后的 TurnTable_Set
  * @retval 无
  */
-void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2,TurnTable_Shape_t Shape)
+void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2)
 {
-  if(Shape==SHAPE_NULL){
-  return;
-
-  }
-
    /* K 为时间系数：1.0 = 按 100RPM 的理论匀速时间，加减速明显时调大即可 */
    const float K=1.9f; const uint16_t speed_rpm=200U;  //1.9-2.1
    const uint8_t accel=40U;
@@ -416,8 +471,15 @@ void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2,TurnTable_Shape_t S
    Grab_End();
 
    /* 松泵后稍等物体落稳 */
-   osDelay(700U);
-   Turn_Flag=1;
-   GrabShape=Shape;
+  ////
+  //在这边让电机下降2.5s在上升2.5s(标志位实现)
+  /* 电机短时下降再上升：置标志位由 GrabTask 执行，每次都要等动作结束才继续 */
+   Grab_MotorRunFor(0U, GRAB_RELEASE_DOWN_MS);
+   Grab_MotorRunFor(1U, GRAB_RELEASE_UP_MS);
+  ///
+
+  CoreXY_MoveTo(Wait_X,Wait_Y,speed_rpm,accel);
+   osDelay(300U);
+   
 }
 

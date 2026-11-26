@@ -179,24 +179,24 @@ for(;;){
 
 if(Servo1_FallFlag){
   Servo1_FallFlag=0;
-  Servo1_MoveTeeth(-10);
+  Servo1_MoveTeeth(-5);
 }
  
 if(Servo1_RiseFlag){
   Servo1_RiseFlag=0;
-  Servo1_MoveTeeth(10);
+  Servo1_MoveTeeth(5);
 
 }
 if(Servo2_OpenFlag){
-  Servo2_OpenFlag=0;
+  
 Servo2_Open();
 osDelay(3000);
 Servo2_CloseFlag=1;
+Servo2_OpenFlag=0;
 }
 if(Servo2_CloseFlag){
-  Servo2_CloseFlag=0;
 Servo2_Return();
-
+Servo2_CloseFlag=0;
 }
 osDelay(20);
 }

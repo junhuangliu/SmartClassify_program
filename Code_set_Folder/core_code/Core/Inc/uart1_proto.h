@@ -12,8 +12,8 @@
   * - pump:<0~100>   不支持；原有水泵接口使用固定占空比
   * - STATUS         查询 CoreXY 通信初始化状态
  * - PING           连通测试
-   * - Grab,<x>,<y>/         抓取任务帧：x/y 为取物点坐标(mm)，'/' 为帧尾，
-   *                           例如 Grab,120,30/；兼容旧格式 Grab,<x>,<y>,<shape>/
+   * - Grab,<x>,<y>/          抓取任务帧：x/y 为取物点坐标(mm)，'/' 为帧尾，
+   *                           例如 Grab,120,30/；抓取结束后回 "OK GRAB DONE"
    * - MoveTo,<x>,<y>/        移动帧：参数可为数字、负值或坐标点名称，
    *                          例如 MoveTo,120,30/、MoveTo,X1,Y1/、MoveTo,Destination_X,Destination_Y/
    * - Set,<名称>,<数值>/     动态修改坐标点：Destination_X/Destination_Y/X0/Y0/X1/Y1/X2/Y2
@@ -24,6 +24,11 @@
    * - MDown/  MUp/           抓取电机下降/上升（置 Grab_MotorBeginFlag / Grab_MotorEndFlag）
    * - SDown/  SUp/           舵机1 下降/上升（置 Servo1_FallFlag / Servo1_RiseFlag）
    * - Down/   Up/            联动：抓取电机 + 舵机1 同时下降/上升
+   * - Servo2Open/           舵机2 打开（置 Servo2_OpenFlag，由 ServoTask 执行转动+3s 保持）
+   * - Servo2Close/          舵机2 回位（置 Servo2_CloseFlag，由 ServoTask 执行反转）
+   * - Turntable,<0~5>/       手动把转台转到指定工位（只转位，不联动舵机2），
+   *                          例如 Turntable,3/ 表示转到 3 号工位
+   * - SetTurn_Flag,<1~6>/   直接把 Turn_Flag 置成指定值（1~6），实际动作由 TurnTableTask 执行
   *
   * 全部自定义逻辑均放置于 USER CODE 区域，符合项目约束。
   ******************************************************************************
@@ -50,22 +55,22 @@ extern "C" {
  */
 typedef enum
 {
-  UART1_PROTO_JOB_GRAB = 0, /* Grab,<x>,<y> 抓取并放置（形状可选，默认工位 0） */
+  UART1_PROTO_JOB_GRAB = 0, /* Grab,<x>,<y> 抓取并放置 */
   UART1_PROTO_JOB_MOVE,     /* MoveTo,<x>,<y> 移动到绝对坐标 */
 } Uart1Proto_JobType_t;
 
 /**
  * @brief 上位机下发的一次任务
  *
- * @details 由 Uart1RxTask 解析帧后入队，CoreXYTask 取出后按 type 执行阻塞动作，
- *          形状号即转台工位号，两者共用 TurnTable_Shape_t，避免再做映射。
+ * @details 由 Uart1RxTask 解析帧后入队，CoreXYTask 取出后按 type 执行阻塞动作；
+ *          shape 为历史字段，串口 Grab 帧已不再下发形状，Grab_XY 也不再接收。
  */
 typedef struct
 {
   Uart1Proto_JobType_t type; /* 任务类型，决定 CoreXYTask 的执行分支 */
   int16_t x;                 /* 目标 X 坐标，单位 mm；MoveTo 允许负值（特殊点） */
   int16_t y;                 /* 目标 Y 坐标，单位 mm；MoveTo 允许负值（特殊点） */
-  TurnTable_Shape_t shape;   /* 仅抓取任务有效；串口未下发时默认 SHAPE_CUBOID */
+  TurnTable_Shape_t shape;   /* 历史字段：Grab 帧不再下发，Grab 任务固定填 SHAPE_NULL */
 } Uart1Proto_Job_t;
 
 /* Exported functions prototypes ---------------------------------------------*/

@@ -106,6 +106,8 @@ static void Uart1Proto_HandleSetFrame(const char *args);
 static void Uart1Proto_HandleWaterPumpOn(void);
 static void Uart1Proto_HandleWaterPumpOff(void);
 static void Uart1Proto_HandleWaterPumpDuty(const char *args);
+static void Uart1Proto_HandleTurntable(const char *args);
+static void Uart1Proto_HandleSetTurnFlag(const char *args);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -249,15 +251,18 @@ void Uart1Proto_Feed(const uint8_t *data, uint16_t len)
  * - 设计意图：分别处理水泵开关、水泵调参、CoreXY 状态查询、抓取任务和移动任务，避免各系统互相联动
  * - 实现要点：
  *   1. 用 strtok 取出首个词，再按 ':' 拆成 key/value
- *   2. 以 "Grab," 开头的词按 "Grab,<x>,<y>" 解析（形状可选），结果入队给 CoreXYTask
+ *   2. 以 "Grab," 开头的词按 "Grab,<x>,<y>" 解析，结果入队给 CoreXYTask
  *   3. 以 "MoveTo," 开头的词按 "MoveTo,<x>,<y>" 解析，坐标可为数字或特殊点名称，结果入队给 CoreXYTask
  *   4. 以 "Set," 开头的词按 "Set,<名称>,<数值>" 直接改写 Grab.c 中的坐标变量
  *   5. MDown/MUp/SDown/SUp 只置执行标志位，动作分别由 GrabTask/ServoTask 执行
  *   6. Down/Up 为联动命令：同时置抓取电机与舵机1 的标志位
- *   7. WaterpumpOn / WaterpumpOff / Waterpump,<duty> 只置标志位或改变量，动作由 WaterPumpTask 执行
- *   8. switch:1/0 只置水泵启停标志，由 WaterPumpTask 执行；PUMP 占空比命令不支持
- *   9. PUMPTEST 只置开泵标志，直接连续吸水，用 WaterpumpOff/switch:0 停止
- *   9. STATUS 返回 CoreXY 初始化状态；PING 保留用于调试
+ *   7. Servo2Open/Servo2Close 只置舵机2 开/关标志，动作由 ServoTask 执行
+ *   8. WaterpumpOn / WaterpumpOff / Waterpump,<duty> 只置标志位或改变量，动作由 WaterPumpTask 执行
+ *   9. Turntable,<0~5> 直接调用 TurnTable_Set 转动（内部用 CurTable 算最短方向并同步新工位）
+ *      SetTurn_Flag,<1~6> 直接写 Turn_Flag，动作由 TurnTableTask 决定
+ *  10. switch:1/0 只置水泵启停标志，由 WaterPumpTask 执行；PUMP 占空比命令不支持
+ *  11. PUMPTEST 只置开泵标志，直接连续吸水，用 WaterpumpOff/switch:0 停止
+ *  12. STATUS 返回 CoreXY 初始化状态；PING 保留用于调试
  * - 注意事项：proto_line 会被 strtok 原地修改，只在解析期间使用
  *
  * @param line 以 '\0' 结尾的一行命令
@@ -350,6 +355,23 @@ static void Uart1Proto_ProcessLine(char *line)
     return;
   }
 
+  /* 舵机2 手动动作：只置标志位，实际转动与 3s 保持由 ServoTask 执行 */
+  if (Uart1Proto_StrIeq(token, "Servo2Open") != 0)
+  {
+    Servo2_OpenFlag = 1U;
+    Servo2_CloseFlag = 0U;
+    Uart1Proto_Send("OK SERVO2 OPEN\r\n");
+    return;
+  }
+
+  if (Uart1Proto_StrIeq(token, "Servo2Close") != 0)
+  {
+    Servo2_CloseFlag = 1U;
+    Servo2_OpenFlag = 0U;
+    Uart1Proto_Send("OK SERVO2 CLOSE\r\n");
+    return;
+  }
+
   /* 水泵命令：WaterpumpOn / WaterpumpOff / Waterpump,<duty> */
   if (Uart1Proto_StrIeq(token, "WaterpumpOn") != 0)
   {
@@ -366,6 +388,20 @@ static void Uart1Proto_ProcessLine(char *line)
   if (Uart1Proto_StartsWith(token, "Waterpump,") != 0U)
   {
     Uart1Proto_HandleWaterPumpDuty(token + 10);
+    return;
+  }
+
+  /* 转台命令：Turntable,<0~5> */
+  if (Uart1Proto_StartsWith(token, "Turntable,") != 0U)
+  {
+    Uart1Proto_HandleTurntable(token + 10);
+    return;
+  }
+
+  /* 直接置转台标志：SetTurn_Flag,<1~6> */
+  if (Uart1Proto_StartsWith(token, "SetTurn_Flag,") != 0U)
+  {
+    Uart1Proto_HandleSetTurnFlag(token + 13);
     return;
   }
 
@@ -595,18 +631,18 @@ static uint8_t Uart1Proto_ParseCoord(const char **cursor, int16_t *value)
  * @brief 解析并投递一条抓取任务帧
  *
  * @details
- * - 设计意图：把上位机 "Grab,<x>,<y>" 文本帧转成结构化任务，交给 CoreXYTask 执行；
- *   串口不再下发形状，形状号默认取 SHAPE_CUBOID，仅用于转台工位选择
+ * - 设计意图：把上位机 "Grab,<x>,<y>" 文本帧转成结构化任务，交给 CoreXYTask 执行
  * - 实现要点：
- *   1. 入参已跳过 "Grab," 前缀，按 x→y 顺序解析，逗号必须存在，帧尾必须是 '\0'
- *   2. 兼容旧格式 "Grab,<x>,<y>,<shape>"：y 后仍有逗号时继续解析可选形状号
- *   3. 校验坐标不超过取物区机械限位、形状号在 0~SHAPE_NULL-1 之间
+ *   1. 入参已跳过 "Grab," 前缀，按 x→y 顺序解析，中间逗号必须存在，帧尾必须是 '\0'
+ *   2. 只接受 x、y 两个字段；多余字段（旧写法 Grab,<x>,<y>,<shape>）按格式错回 ERR FRAME
+ *   3. 校验坐标不超过取物区机械限位
  *   4. 校验通过后放入任务队列（深度 UART1_PROTO_JOB_DEPTH），并回 OK GRAB
  * - 数据流：USART1 文本 -> 本函数 -> proto_job_queue -> CoreXYTask -> Grab_XY
  * - 注意事项：本函数运行在 Uart1RxTask，只做解析与入队，绝不能在这里调用 Grab_XY；
- *   队列满时回 ERR BUSY，让上位机重发，避免动作被静默丢弃
+ *   队列满时回 ERR BUSY，让上位机重发，避免动作被静默丢弃；抓取真正结束后
+ *   CoreXYTask 会再回 "OK GRAB DONE"
  *
- * @param args 已去掉 "Grab," 前缀的参数字符串，形如 "120,30" 或 "120,30,3"
+ * @param args 已去掉 "Grab," 前缀的参数字符串，形如 "120,30"
  * @retval 无
  */
 static void Uart1Proto_HandleGrabFrame(const char *args)
@@ -615,7 +651,6 @@ static void Uart1Proto_HandleGrabFrame(const char *args)
   const char *p = args;
   uint16_t x = 0U;
   uint16_t y = 0U;
-  uint16_t shape = (uint16_t)SHAPE_CUBOID;
 
   if ((Uart1Proto_ParseUint(&p, &x) == 0U) || (*p != ','))
   {
@@ -624,30 +659,13 @@ static void Uart1Proto_HandleGrabFrame(const char *args)
   }
   p++;
 
-  if (Uart1Proto_ParseUint(&p, &y) == 0U)
+  if ((Uart1Proto_ParseUint(&p, &y) == 0U) || (*p != '\0'))
   {
     Uart1Proto_Send("ERR FRAME\r\n");
     return;
   }
 
-  if (*p == ',')
-  {
-    p++;
-    if ((Uart1Proto_ParseUint(&p, &shape) == 0U) || (*p != '\0'))
-    {
-      Uart1Proto_Send("ERR FRAME\r\n");
-      return;
-    }
-  }
-  else if (*p != '\0')
-  {
-    Uart1Proto_Send("ERR FRAME\r\n");
-    return;
-  }
-
-  if ((x > UART1_PROTO_X_MAX) ||
-      (y > UART1_PROTO_Y_MAX) ||
-      (shape >= (uint16_t)SHAPE_NULL))
+  if ((x > UART1_PROTO_X_MAX) || (y > UART1_PROTO_Y_MAX))
   {
     Uart1Proto_Send("ERR RANGE\r\n");
     return;
@@ -656,7 +674,7 @@ static void Uart1Proto_HandleGrabFrame(const char *args)
   job.type = UART1_PROTO_JOB_GRAB;
   job.x = (int16_t)x;
   job.y = (int16_t)y;
-  job.shape = (TurnTable_Shape_t)shape;
+  job.shape = SHAPE_NULL;
 
   if (Uart1Proto_PostJob(&job) == 0U)
   {
@@ -665,8 +683,7 @@ static void Uart1Proto_HandleGrabFrame(const char *args)
   }
 
   (void)snprintf(proto_reply, sizeof(proto_reply),
-                 "OK GRAB X=%u Y=%u SHAPE=%u\r\n",
-                 (unsigned)x, (unsigned)y, (unsigned)shape);
+                 "OK GRAB X=%u Y=%u\r\n", (unsigned)x, (unsigned)y);
   Uart1Proto_Send(proto_reply);
 }
 
@@ -899,6 +916,87 @@ static void Uart1Proto_HandleWaterPumpDuty(const char *args)
 
   (void)snprintf(proto_reply, sizeof(proto_reply),
                  "OK WATERPUMP DUTY=%u\r\n", (unsigned)duty);
+  Uart1Proto_Send(proto_reply);
+}
+
+/**
+ * @brief 处理 Turntable,<0~5> 命令：手动把转台转到指定工位
+ *
+ * @details
+ * - 设计意图：让上位机直接指定工位，无需走完整抓取流程
+ * - 实现要点：
+ *   1. 入参已跳过 "Turntable," 前缀，解析十进制工位号，帧尾必须是 '\0'
+ *   2. 越界（>SHAPE_PENTA_PRISM 即 5）回 ERR RANGE，格式错回 ERR FRAME
+ *   3. 合法时调用原开环 TurnTable_Set()，由它用 CurTable 算最短方向并同步新工位；
+ *      与抓取流程的 Turn_Flag 分离，手动转动不会联动舵机2
+ * - 数据流：USART1 文本 -> TurnTable_Set -> StepperMotor_SetPosition -> UART5
+ * - 注意事项：TurnTable_Set 内部有阻塞式串口发送与应答等待（几十毫秒），
+ *   会占用 Uart1RxTask；手动命令频率低，可接受
+ *
+ * @param args 已去掉 "Turntable," 前缀的参数字符串，形如 "3"
+ * @retval 无
+ */
+static void Uart1Proto_HandleTurntable(const char *args)
+{
+  const char *p = args;
+  uint16_t table = 0U;
+
+  if ((Uart1Proto_ParseUint(&p, &table) == 0U) || (*p != '\0'))
+  {
+    Uart1Proto_Send("ERR FRAME\r\n");
+    return;
+  }
+
+  if (table > (uint16_t)SHAPE_PENTA_PRISM)
+  {
+    Uart1Proto_Send("ERR RANGE\r\n");
+    return;
+  }
+
+  TurnTable_Set((uint8_t)table);
+
+  (void)snprintf(proto_reply, sizeof(proto_reply),
+                 "OK TURNTABLE=%u\r\n", (unsigned)table);
+  Uart1Proto_Send(proto_reply);
+}
+
+/**
+ * @brief 处理 SetTurn_Flag,<1~6> 命令：直接置转台标志位
+ *
+ * @details
+ * - 设计意图：调试时绕过抓取流程，直接给 Turn_Flag 赋指定值，观察 TurnTableTask 的反应
+ * - 实现要点：
+ *   1. 入参已跳过 "SetTurn_Flag," 前缀，解析十进制数值，帧尾必须是 '\0'
+ *   2. 只接受 1~6，越界回 ERR RANGE，格式错回 ERR FRAME
+ *   3. 直接把数值写入 volatile 的 Turn_Flag，动作时机与内容由 TurnTableTask 决定
+ * - 数据流：USART1 文本 -> Turn_Flag -> TurnTableTask
+ * - 注意事项：Turn_Flag 是任务间共享的 volatile 变量，这里只写不改，实际转位
+ *   仍由 TurnTableTask 按自己的判据执行
+ *
+ * @param args 已去掉 "SetTurn_Flag," 前缀的参数字符串，形如 "3"
+ * @retval 无
+ */
+static void Uart1Proto_HandleSetTurnFlag(const char *args)
+{
+  const char *p = args;
+  uint16_t value = 0U;
+
+  if ((Uart1Proto_ParseUint(&p, &value) == 0U) || (*p != '\0'))
+  {
+    Uart1Proto_Send("ERR FRAME\r\n");
+    return;
+  }
+
+  if ((value < 1U) || (value > 6U))
+  {
+    Uart1Proto_Send("ERR RANGE\r\n");
+    return;
+  }
+
+  Turn_Flag = (uint8_t)value;
+
+  (void)snprintf(proto_reply, sizeof(proto_reply),
+                 "OK TURNFLAG=%u\r\n", (unsigned)value);
   Uart1Proto_Send(proto_reply);
 }
 

@@ -929,7 +929,7 @@ osDelay(1000U);
       else
       {
         Grab_XY((uint16_t)job.x, (uint16_t)job.y,
-                (uint16_t)Destination_X, (uint16_t)Destination_Y, job.shape);
+                (uint16_t)Destination_X, (uint16_t)Destination_Y);
         Uart1Proto_Send("OK GRAB DONE\r\n");
       }
       continue;

@@ -31,7 +31,7 @@ void GrabTask(void *argument);
 void Grab_To_Zero(void);
 void Grab_Begin(void);
 void Grab_End(void);
-void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2,TurnTable_Shape_t Shape);
+void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2);
 
 /* 常用坐标点：运行期可通过 UART1 的 Set,<名称>,<数值>/ 动态修改；
    因特殊点存在负值（如 Y0=-15），统一用有符号类型存储 */

@@ -31,7 +31,7 @@ float duty;
    实测 1800ms/圈 × 9/16（1012ms）只走了 8 齿，折合整圈约 2025ms，
    改按 10 齿校准，单次约 1266ms */
 #define SERVO2_GEAR_TEETH_TOTAL  16U
-#define SERVO2_GEAR_TEETH_MOVE   10U
+#define SERVO2_GEAR_TEETH_MOVE   13U
 #define SERVO2_FULL_REV_MS       2025U
 #define SERVO2_MOVE_MS \
   ((SERVO2_FULL_REV_MS * SERVO2_GEAR_TEETH_MOVE) / SERVO2_GEAR_TEETH_TOTAL)

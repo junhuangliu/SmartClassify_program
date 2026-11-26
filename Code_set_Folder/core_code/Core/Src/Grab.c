@@ -167,7 +167,8 @@ static void Grab_ServoUp(void);
  * @param run_ms 电机本次动作时长，单位 ms
  * @retval 无
  */
-static void Grab_MotorRunFor(uint8_t direction, uint16_t run_ms)
+/* Grab_XY 里调用这段的代码目前用 #if 0 关闭，函数先保留以便随时恢复，避免 unused 告警 */
+static void __attribute__((unused)) Grab_MotorRunFor(uint8_t direction, uint16_t run_ms)
 {
   Grab_MotorRunMs = run_ms;
   Grab_MotorStart(direction);
@@ -470,16 +471,16 @@ void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2)
 
    Grab_End();
 
+   #if 0
    /* 松泵后稍等物体落稳 */
-  ////
   //在这边让电机下降2.5s在上升2.5s(标志位实现)
   /* 电机短时下降再上升：置标志位由 GrabTask 执行，每次都要等动作结束才继续 */
    Grab_MotorRunFor(0U, GRAB_RELEASE_DOWN_MS);
    Grab_MotorRunFor(1U, GRAB_RELEASE_UP_MS);
-  ///
-
-  CoreXY_MoveTo(Wait_X,Wait_Y,speed_rpm,accel);
-   osDelay(300U);
+#endif
+osDelay(900);
+CoreXY_MoveTo(Wait_X,Wait_Y,speed_rpm,accel);
+osDelay(300U);
    
 }
 

@@ -8,6 +8,7 @@ volatile uint8_t WaterPump_OnFlag = 0U;
 volatile uint8_t WaterPump_OffFlag = 0U;
 volatile uint8_t WaterPump_DutyUpdateFlag = 0U;
 
+
 /* 水泵当前是否在转：Stop 后禁止直接刷 CCR，否则会把泵重新打开 */
 static volatile uint8_t pump_running = 0U;
 
@@ -98,3 +99,4 @@ return;
 
 __HAL_TIM_SET_COMPARE(&htim4, PUMP_CH, WATER_PUMP_DUTY_CCR);
 }
+

@@ -249,13 +249,14 @@ void Uart1Proto_Feed(const uint8_t *data, uint16_t len)
  * - 设计意图：分别处理水泵开关、水泵调参、CoreXY 状态查询、抓取任务和移动任务，避免各系统互相联动
  * - 实现要点：
  *   1. 用 strtok 取出首个词，再按 ':' 拆成 key/value
- *   2. 以 "Grab," 开头的词按 "Grab,<x>,<y>,<shape>" 解析，结果入队给 CoreXYTask
+ *   2. 以 "Grab," 开头的词按 "Grab,<x>,<y>" 解析（形状可选），结果入队给 CoreXYTask
  *   3. 以 "MoveTo," 开头的词按 "MoveTo,<x>,<y>" 解析，坐标可为数字或特殊点名称，结果入队给 CoreXYTask
  *   4. 以 "Set," 开头的词按 "Set,<名称>,<数值>" 直接改写 Grab.c 中的坐标变量
  *   5. MDown/MUp/SDown/SUp 只置执行标志位，动作分别由 GrabTask/ServoTask 执行
  *   6. Down/Up 为联动命令：同时置抓取电机与舵机1 的标志位
  *   7. WaterpumpOn / WaterpumpOff / Waterpump,<duty> 只置标志位或改变量，动作由 WaterPumpTask 执行
- *   8. switch:1/0 分别调用原有水泵启停函数；PUMP 占空比命令不支持
+ *   8. switch:1/0 只置水泵启停标志，由 WaterPumpTask 执行；PUMP 占空比命令不支持
+ *   9. PUMPTEST 只置开泵标志，直接连续吸水，用 WaterpumpOff/switch:0 停止
  *   9. STATUS 返回 CoreXY 初始化状态；PING 保留用于调试
  * - 注意事项：proto_line 会被 strtok 原地修改，只在解析期间使用
  *
@@ -284,7 +285,7 @@ static void Uart1Proto_ProcessLine(char *line)
     return;
   }
 
-  /* 任务帧：Grab,<x>,<y>,<shape> 与 MoveTo,<x>,<y> */
+  /* 任务帧：Grab,<x>,<y>（形状可选）与 MoveTo,<x>,<y> */
   if (Uart1Proto_StartsWith(token, "Grab,") != 0U)
   {
     Uart1Proto_HandleGrabFrame(token + 5);
@@ -368,10 +369,19 @@ static void Uart1Proto_ProcessLine(char *line)
     return;
   }
 
-  /* 无冒号的命令：PING / STATUS */
+  /* 无冒号的命令：PUMPTEST（直接开始吸水） / PING / STATUS */
   colon = strchr(token, ':');
   if (colon == NULL)
   {
+    if (Uart1Proto_StrIeq(token, "PUMPTEST") != 0)
+    {
+      WaterPump_OffFlag = 0U;
+      WaterPump_DutyUpdateFlag = 0U;
+      WaterPump_OnFlag = 1U;
+      Uart1Proto_Send("OK PUMPTEST ON\r\n");
+      return;
+    }
+
     if (Uart1Proto_StrIeq(token, "PING") != 0)
     {
       Uart1Proto_Send("OK PONG\r\n");
@@ -395,6 +405,16 @@ static void Uart1Proto_ProcessLine(char *line)
   key = token;
   value = colon + 1;
 
+  if (Uart1Proto_StrIeq(key, "PUMPTEST") != 0)
+  {
+    /* 兼容旧的 PUMPTEST:<seconds> 写法，忽略秒数，直接连续吸水 */
+    WaterPump_OffFlag = 0U;
+    WaterPump_DutyUpdateFlag = 0U;
+    WaterPump_OnFlag = 1U;
+    Uart1Proto_Send("OK PUMPTEST ON\r\n");
+    return;
+  }
+
   if (Uart1Proto_StrIeq(key, "PUMP") != 0)
   {
     Uart1Proto_Send("ERR UNSUPPORTED\r\n");
@@ -403,16 +423,22 @@ static void Uart1Proto_ProcessLine(char *line)
 
   if (Uart1Proto_StrIeq(key, "SWITCH") != 0)
   {
+    /* 与 WaterpumpOn/Off 一样只置标志，硬件时序统一由 WaterPumpTask 执行，
+       避免 Uart1RxTask 与 CoreXYTask 同时操作 TIM4 */
     if (Uart1Proto_StrIeq(value, "1") != 0)
     {
-      WaterPump_Start();
+      WaterPump_OffFlag = 0U;
+      WaterPump_DutyUpdateFlag = 0U;
+      WaterPump_OnFlag = 1U;
       Uart1Proto_Send("OK SWITCH=1\r\n");
       return;
     }
 
     if (Uart1Proto_StrIeq(value, "0") != 0)
     {
-      WaterPump_Stop();
+      WaterPump_OnFlag = 0U;
+      WaterPump_DutyUpdateFlag = 0U;
+      WaterPump_OffFlag = 1U;
       Uart1Proto_Send("OK SWITCH=0\r\n");
       return;
     }
@@ -569,16 +595,18 @@ static uint8_t Uart1Proto_ParseCoord(const char **cursor, int16_t *value)
  * @brief 解析并投递一条抓取任务帧
  *
  * @details
- * - 设计意图：把上位机 "Grab,<x>,<y>,<shape>" 文本帧转成结构化任务，交给 CoreXYTask 执行
+ * - 设计意图：把上位机 "Grab,<x>,<y>" 文本帧转成结构化任务，交给 CoreXYTask 执行；
+ *   串口不再下发形状，形状号默认取 SHAPE_CUBOID，仅用于转台工位选择
  * - 实现要点：
- *   1. 入参已跳过 "Grab," 前缀，按 x→y→shape 顺序逐字段解析，逗号必须存在，帧尾必须是 '\0'
- *   2. 校验坐标不超过取物区机械限位、形状号在 0~SHAPE_NULL-1 之间
- *   3. 校验通过后放入任务队列（深度 UART1_PROTO_JOB_DEPTH），并回 OK GRAB
+ *   1. 入参已跳过 "Grab," 前缀，按 x→y 顺序解析，逗号必须存在，帧尾必须是 '\0'
+ *   2. 兼容旧格式 "Grab,<x>,<y>,<shape>"：y 后仍有逗号时继续解析可选形状号
+ *   3. 校验坐标不超过取物区机械限位、形状号在 0~SHAPE_NULL-1 之间
+ *   4. 校验通过后放入任务队列（深度 UART1_PROTO_JOB_DEPTH），并回 OK GRAB
  * - 数据流：USART1 文本 -> 本函数 -> proto_job_queue -> CoreXYTask -> Grab_XY
  * - 注意事项：本函数运行在 Uart1RxTask，只做解析与入队，绝不能在这里调用 Grab_XY；
  *   队列满时回 ERR BUSY，让上位机重发，避免动作被静默丢弃
  *
- * @param args 已去掉 "Grab," 前缀的参数字符串，形如 "120,30,3"
+ * @param args 已去掉 "Grab," 前缀的参数字符串，形如 "120,30" 或 "120,30,3"
  * @retval 无
  */
 static void Uart1Proto_HandleGrabFrame(const char *args)
@@ -587,7 +615,7 @@ static void Uart1Proto_HandleGrabFrame(const char *args)
   const char *p = args;
   uint16_t x = 0U;
   uint16_t y = 0U;
-  uint16_t shape = 0U;
+  uint16_t shape = (uint16_t)SHAPE_CUBOID;
 
   if ((Uart1Proto_ParseUint(&p, &x) == 0U) || (*p != ','))
   {
@@ -596,14 +624,22 @@ static void Uart1Proto_HandleGrabFrame(const char *args)
   }
   p++;
 
-  if ((Uart1Proto_ParseUint(&p, &y) == 0U) || (*p != ','))
+  if (Uart1Proto_ParseUint(&p, &y) == 0U)
   {
     Uart1Proto_Send("ERR FRAME\r\n");
     return;
   }
-  p++;
 
-  if ((Uart1Proto_ParseUint(&p, &shape) == 0U) || (*p != '\0'))
+  if (*p == ',')
+  {
+    p++;
+    if ((Uart1Proto_ParseUint(&p, &shape) == 0U) || (*p != '\0'))
+    {
+      Uart1Proto_Send("ERR FRAME\r\n");
+      return;
+    }
+  }
+  else if (*p != '\0')
   {
     Uart1Proto_Send("ERR FRAME\r\n");
     return;
@@ -852,7 +888,7 @@ static void Uart1Proto_HandleWaterPumpDuty(const char *args)
     return;
   }
 
-  if (duty > 100U)
+  if (duty > WATER_PUMP_DUTY_MAX)
   {
     Uart1Proto_Send("ERR RANGE\r\n");
     return;

@@ -11,8 +11,8 @@
 #include "Grab.h"
 extern volatile uint8_t Servo1_FallFlag;
 extern volatile uint8_t Servo1_RiseFlag;
-extern uint8_t Servo2_OpenFlag;
-extern uint8_t Servo2_CloseFlag;
+extern volatile uint8_t Servo2_OpenFlag;
+extern volatile uint8_t Servo2_CloseFlag;
 void Servo_Init(void);
 void Servo_SetAngle(float Angle, uint32_t CHANNEL);
 

@@ -4,8 +4,8 @@
 #include "cmsis_os2.h"
 #include <math.h>
 extern UART_HandleTypeDef huart5;
-TurnTable_Shape_t GrabShape=SHAPE_NULL;
-uint8_t Turn_Flag;
+volatile TurnTable_Shape_t GrabShape=SHAPE_NULL;
+volatile uint8_t Turn_Flag;
 static uint8_t CurTable=0;
 
 /**

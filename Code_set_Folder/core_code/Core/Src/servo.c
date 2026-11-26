@@ -2,8 +2,8 @@
 
  volatile uint8_t Servo1_FallFlag=0;
  volatile uint8_t Servo1_RiseFlag=0;
- uint8_t Servo2_OpenFlag=0;
- uint8_t Servo2_CloseFlag=0;
+ volatile uint8_t Servo2_OpenFlag=0;
+ volatile uint8_t Servo2_CloseFlag=0;
 float duty;
 
 /* 舵机测试模式：

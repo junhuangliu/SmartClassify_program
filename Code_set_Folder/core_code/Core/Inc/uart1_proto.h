@@ -7,19 +7,20 @@
   * @attention
   *
   * 协议约定（文本，大小写不敏感，以 \r 、 \n 或 / 结尾）：
-  * - switch:1       调用原有 WaterPump_Start() 开启水泵/阀
-  * - switch:0       调用原有 WaterPump_Stop() 关闭水泵/阀
+  * - switch:1       置 WaterPump_OnFlag，由 WaterPumpTask 开启水泵/阀
+  * - switch:0       置 WaterPump_OffFlag，由 WaterPumpTask 关闭水泵/阀
   * - pump:<0~100>   不支持；原有水泵接口使用固定占空比
   * - STATUS         查询 CoreXY 通信初始化状态
  * - PING           连通测试
-   * - Grab,<x>,<y>,<shape>/  抓取任务帧：x/y 为取物点坐标(mm)，shape 为 0~5 形状号，
-   *                           '/' 为帧尾，例如 Grab,120,30,3/ 表示到 (120,30) 抓 3 号形状
+   * - Grab,<x>,<y>/         抓取任务帧：x/y 为取物点坐标(mm)，'/' 为帧尾，
+   *                           例如 Grab,120,30/；兼容旧格式 Grab,<x>,<y>,<shape>/
    * - MoveTo,<x>,<y>/        移动帧：参数可为数字、负值或坐标点名称，
    *                          例如 MoveTo,120,30/、MoveTo,X1,Y1/、MoveTo,Destination_X,Destination_Y/
    * - Set,<名称>,<数值>/     动态修改坐标点：Destination_X/Destination_Y/X0/Y0/X1/Y1/X2/Y2
    * - Waterpump,<duty>/      动态修改水泵占空比(0~100)，运行中即时生效
    * - WaterpumpOn/           打开水泵（先开阀再启泵）
    * - WaterpumpOff/          关闭水泵（先停泵再关阀）
+   * - PUMPTEST/              吸水测试：直接开始连续吸水，需手动停止
    * - MDown/  MUp/           抓取电机下降/上升（置 Grab_MotorBeginFlag / Grab_MotorEndFlag）
    * - SDown/  SUp/           舵机1 下降/上升（置 Servo1_FallFlag / Servo1_RiseFlag）
    * - Down/   Up/            联动：抓取电机 + 舵机1 同时下降/上升
@@ -49,7 +50,7 @@ extern "C" {
  */
 typedef enum
 {
-  UART1_PROTO_JOB_GRAB = 0, /* Grab,<x>,<y>,<shape> 抓取并放置 */
+  UART1_PROTO_JOB_GRAB = 0, /* Grab,<x>,<y> 抓取并放置（形状可选，默认工位 0） */
   UART1_PROTO_JOB_MOVE,     /* MoveTo,<x>,<y> 移动到绝对坐标 */
 } Uart1Proto_JobType_t;
 
@@ -64,7 +65,7 @@ typedef struct
   Uart1Proto_JobType_t type; /* 任务类型，决定 CoreXYTask 的执行分支 */
   int16_t x;                 /* 目标 X 坐标，单位 mm；MoveTo 允许负值（特殊点） */
   int16_t y;                 /* 目标 Y 坐标，单位 mm；MoveTo 允许负值（特殊点） */
-  TurnTable_Shape_t shape;   /* 仅抓取任务有效，取值 SHAPE_CUBOID~SHAPE_PENTA_PRISM */
+  TurnTable_Shape_t shape;   /* 仅抓取任务有效；串口未下发时默认 SHAPE_CUBOID */
 } Uart1Proto_Job_t;
 
 /* Exported functions prototypes ---------------------------------------------*/
@@ -112,7 +113,7 @@ void Uart1Proto_Send(const char *str);
  * - 设计意图：帧解析放在 Uart1RxTask，抓取动作由 CoreXYTask 执行，
  *   用单生产者/单消费者队列解耦，避免解析上下文长时间阻塞在机械动作上
  * - 实现要点：非阻塞读取，队列为空立即返回 0；
- *   任务由 Grab,<x>,<y>,<shape>/ 或 MoveTo,<x>,<y>/ 帧产生
+  *   任务由 Grab,<x>,<y>/ 或 MoveTo,<x>,<y>/ 帧产生
  * - 注意事项：仅在任务上下文调用；取出即消费，失败不重试
  *
  * @param job 输出参数，取到任务时写入类型、坐标与形状

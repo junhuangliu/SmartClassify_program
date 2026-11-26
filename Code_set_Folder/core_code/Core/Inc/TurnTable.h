@@ -15,7 +15,7 @@ typedef enum
   SHAPE_PENTA_PRISM,   /* 五棱柱 */
   SHAPE_NULL          /* 形状总数，同时是非法工位边界 */
 } TurnTable_Shape_t;
-extern TurnTable_Shape_t GrabShape;
+extern volatile TurnTable_Shape_t GrabShape;
 /**
  * @brief 初始化转台步进电机通信。
  * @details 将全局转台电机对象 stepper_motor_b2 绑定到 UART5，并启动电机应答
@@ -33,7 +33,7 @@ void TurnTable_Set(uint8_t Table);
  * @retval 无（任务不返回）。
  */
 void TurnTableTask(void *argument);
-extern uint8_t Turn_Flag;
+extern volatile uint8_t Turn_Flag;
 
 
 

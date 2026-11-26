@@ -15,19 +15,22 @@
 /* TIM4 句柄定义在 main.c，此处仅作外部声明供 WaterPump.c 使用 */
 extern TIM_HandleTypeDef htim4;
 
-/* 水泵默认占空比百分比；运行期可通过 UART1 的 Waterpump,<0~100>/ 帧修改 */
-#define WATER_PUMP_DUTY_DEFAULT 67U
+/* 水泵默认占空比百分比；运行期可通过 UART1 的 Waterpump,<0~95>/ 帧修改。
+   实测该 PWM 电子开关 100% 会恒定高电平导致泵不转，故上限取 95% */
+#define WATER_PUMP_DUTY_DEFAULT 90U
+#define WATER_PUMP_DUTY_MAX     95U
 
 /* 关闭水路时阀门需要的驱动占空比：与水泵速度解耦，避免把水泵占空比调低后关不严阀 */
 #define WATER_PUMP_VALVE_DUTY_PERCENT 67U
 
-/* 运行期可变的水泵占空比（0~100），由 UART1 解析任务直接写入 */
+/* 运行期可变的水泵占空比（0~95），由 UART1 解析任务直接写入 */
 extern volatile uint8_t WaterPump_DutyPercent;
 
 /* 命令标志位：Uart1RxTask 置位，WaterPumpTask 消费后清零，实际 PWM 操作只在任务里做 */
 extern volatile uint8_t WaterPump_OnFlag;
 extern volatile uint8_t WaterPump_OffFlag;
 extern volatile uint8_t WaterPump_DutyUpdateFlag;
+
 
 /* 占空比按百分比换算，ARR 变化时输出自动跟随；
    PUMP 通道使用运行期占空比，VALVE 通道固定用关阀占空比 */
@@ -39,6 +42,7 @@ extern volatile uint8_t WaterPump_DutyUpdateFlag;
 void WaterPump_Init(void);
 void WaterPump_Start(void);
 void WaterPump_Stop(void);
+
 
 /**
  * @brief 把当前 WaterPump_DutyPercent 下发到水泵 PWM 通道

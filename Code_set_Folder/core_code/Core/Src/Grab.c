@@ -15,8 +15,8 @@ volatile int16_t X1 = 180;
 volatile int16_t Y1 = 0;
 volatile int16_t X2 = 0;
 volatile int16_t Y2 = 180;
-volatile int16_t Wait_X = 90;
-volatile int16_t Wait_Y = 90;
+volatile int16_t Wait_X = 0;
+volatile int16_t Wait_Y = 0;
 /* 电机每转的皮带行程：20 齿 × 2mm 齿距 = 40mm */
 #define GRAB_BELT_MM_PER_REV \
   (COREXY_BELT_TOOTH_PITCH_MM * COREXY_PULLEY_TEETH)

@@ -478,9 +478,9 @@ void Grab_XY(uint16_t x1,uint16_t y1,uint16_t x2,uint16_t y2)
    Grab_MotorRunFor(0U, GRAB_RELEASE_DOWN_MS);
    Grab_MotorRunFor(1U, GRAB_RELEASE_UP_MS);
 #endif
-osDelay(900);
+osDelay(1700);
 CoreXY_MoveTo(Wait_X,Wait_Y,speed_rpm,accel);
-osDelay(300U);
+osDelay(2300U);
    
 }
 

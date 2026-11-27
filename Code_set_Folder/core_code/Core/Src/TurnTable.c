@@ -36,22 +36,22 @@ int8_t dis=Table-CurTable;
 int8_t absdis=fabs(Table-CurTable);
  if(dis>0 && absdis<=3){
  
-StepperMotor_SetPosition(&stepper_motor_b2, 1, 300, 20,absdis*533.333, true, false);
+StepperMotor_SetPosition(&stepper_motor_b2, 1, 50, 30,absdis*533.333, true, false);
 
 
 }
 else if(dis>0 && absdis>3){
-StepperMotor_SetPosition(&stepper_motor_b2, 0, 300, 20,(6-absdis)*533.333, true, false);
+StepperMotor_SetPosition(&stepper_motor_b2, 0, 50, 30,(6-absdis)*533.333, true, false);
 
 }
 else if(dis<0 && absdis<=3){
  
-StepperMotor_SetPosition(&stepper_motor_b2, 0, 300, 20,absdis*533.333, true, false);
+StepperMotor_SetPosition(&stepper_motor_b2, 0, 50, 30,absdis*533.333, true, false);
 
 
 }else if(dis<0 && absdis>3){
  
-StepperMotor_SetPosition(&stepper_motor_b2, 1, 300, 20,(6-absdis)*533.333, true, false);
+StepperMotor_SetPosition(&stepper_motor_b2, 1, 50, 30,(6-absdis)*533.333, true, false);
 
 
 }
@@ -90,7 +90,7 @@ void TurnTableTask(void *argument)
     }
     #endif
 if(Turn_Flag){
-if(Turn_Flag<6){
+if(Turn_Flag<=6){
 Turn_Flag--;
 TurnTable_Set(Turn_Flag);
 osDelay(700);

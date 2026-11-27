@@ -740,8 +740,8 @@ HAL_StatusTypeDef CoreXY_MoveOriginUSART2(void)
 
     /* 位置模式给足行程，撞限位由电流增量判定 */
     motion_active = true;
-    status = (axis == 0U) ? CoreXY_MoveTo(0.0f, -10000.0f, 70U, 20U) :
-                            CoreXY_MoveTo(-10000.0f, 0.0f, 70U, 20U);
+    status = (axis == 0U) ? CoreXY_MoveTo(0.0f, -10000.0f, 50U, 20U) :
+                            CoreXY_MoveTo(-10000.0f, 0.0f, 50U, 20U);
     if (status != HAL_OK)
     {
       corexy_origin_error_message = "ERR ORIGIN: motor command failed\r\n";
@@ -937,6 +937,7 @@ osDelay(1000U);
 
     osDelay(50U);
   }
+
 }
 
 /**
